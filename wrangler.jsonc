@@ -34,10 +34,11 @@
   "vars": {
     "PRODUCTIVE_API_BASE_URL": "https://api.productive.io/api/v2/",
   },
-  // PRODUCTIVE_ORG_ID and USER_MAPPING are stored as secrets:
-  //   wrangler secret put PRODUCTIVE_ORG_ID
-  //   wrangler secret put USER_MAPPING < users.json
-  // USER_MAPPING JSON: { "<email>": { "userId": <id>, "apiToken": "<token>" }, ... }
+  // Secrets (set via `wrangler secret put <NAME>`):
+  //   PRODUCTIVE_ORG_ID  - your Productive organization ID
+  //   USER_MAPPING       - JSON: { "<email>": { "userId": <id>, "apiToken": "<token>" }, ... }
+  //   TEAM_DOMAIN        - https://<your-team-name>.cloudflareaccess.com
+  //   POLICY_AUD         - the AUD tag from your Access application's "Basic information"
   /**
    * Smart Placement
    * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
