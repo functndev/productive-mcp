@@ -1,5 +1,8 @@
 import { Buffer } from "node:buffer";
-import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import type {
+  AuthRequest,
+  OAuthHelpers,
+} from "@cloudflare/workers-oauth-provider";
 import {
   addApprovedClient,
   createOAuthState,
@@ -124,11 +127,19 @@ export async function handleAccessRequest(
       redirectHeaders.append("Set-Cookie", approvedClientCookie);
       redirectHeaders.append("Set-Cookie", csrfResult.clearCookie);
 
-      return redirectToAccess(request, env, stateToken, codeChallenge, redirectHeaders);
+      return redirectToAccess(
+        request,
+        env,
+        stateToken,
+        codeChallenge,
+        redirectHeaders,
+      );
     } catch (error: any) {
       console.error("POST /authorize error:", error);
       if (error instanceof OAuthError) return error.toResponse();
-      return new Response(`Internal server error: ${error.message}`, { status: 500 });
+      return new Response(`Internal server error: ${error.message}`, {
+        status: 500,
+      });
     }
   }
 
@@ -168,7 +179,9 @@ export async function handleAccessRequest(
     const sub = String(idTokenClaims.sub ?? "");
 
     if (!email) {
-      return new Response("Forbidden: ID token has no email claim", { status: 403 });
+      return new Response("Forbidden: ID token has no email claim", {
+        status: 403,
+      });
     }
 
     // Resolve Productive credentials for this user.

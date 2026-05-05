@@ -45,13 +45,13 @@ In the Cloudflare dashboard: **Zero Trust → Access → Applications → Add an
 
 Copy these from the OIDC settings:
 
-| Field in dashboard         | Secret name                  |
-| -------------------------- | ---------------------------- |
-| Client ID                  | `ACCESS_CLIENT_ID`           |
-| Client secret              | `ACCESS_CLIENT_SECRET`       |
-| Authorization endpoint     | `ACCESS_AUTHORIZATION_URL`   |
-| Token endpoint             | `ACCESS_TOKEN_URL`           |
-| Key endpoint (JWKS)        | `ACCESS_JWKS_URL`            |
+| Field in dashboard     | Secret name                |
+| ---------------------- | -------------------------- |
+| Client ID              | `ACCESS_CLIENT_ID`         |
+| Client secret          | `ACCESS_CLIENT_SECRET`     |
+| Authorization endpoint | `ACCESS_AUTHORIZATION_URL` |
+| Token endpoint         | `ACCESS_TOKEN_URL`         |
+| Key endpoint (JWKS)    | `ACCESS_JWKS_URL`          |
 
 ### 3. Set Worker secrets
 
@@ -76,7 +76,7 @@ openssl rand -hex 32 | wrangler secret put COOKIE_ENCRYPTION_KEY
 ```json
 {
   "alice@example.com": { "userId": 123456, "apiToken": "alice-token" },
-  "bob@example.com":   { "userId": 234567, "apiToken": "bob-token"   }
+  "bob@example.com": { "userId": 234567, "apiToken": "bob-token" }
 }
 ```
 

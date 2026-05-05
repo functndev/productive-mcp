@@ -13,7 +13,7 @@ export class ProductiveMcp extends McpAgent<Env, unknown, Props> {
   async init() {
     const env = this.env as Env & { PRODUCTIVE_ORG_ID?: string };
     const config: Config = parseConfig({
-      // Per-user values resolved during OAuth callback (access-handler.ts).
+      // Per-user API token resolved from USER_MAPPING by the Access middleware.
       PRODUCTIVE_API_TOKEN: this.props?.productiveApiToken,
       PRODUCTIVE_USER_ID: this.props?.productiveUserId,
       PRODUCTIVE_ORG_ID: env.PRODUCTIVE_ORG_ID,
