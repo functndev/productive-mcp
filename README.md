@@ -111,4 +111,4 @@ npm run deploy
 }
 ```
 
-The first request triggers the OAuth flow in your browser. After successful Access login, subsequent requests reuse the issued token.
+The first request triggers the OAuth flow in your browser. After successful Access login, subsequent requests reuse the issued token
