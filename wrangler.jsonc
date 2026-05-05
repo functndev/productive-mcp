@@ -27,6 +27,12 @@
       },
     ],
   },
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "<Add-KV-ID>",
+    },
+  ],
   "observability": {
     "enabled": true,
   },
@@ -35,10 +41,14 @@
     "PRODUCTIVE_API_BASE_URL": "https://api.productive.io/api/v2/",
   },
   // Secrets (set via `wrangler secret put <NAME>`):
-  //   PRODUCTIVE_ORG_ID  - your Productive organization ID
-  //   USER_MAPPING       - JSON: { "<email>": { "userId": <id>, "apiToken": "<token>" }, ... }
-  //   TEAM_DOMAIN        - https://<your-team-name>.cloudflareaccess.com
-  //   POLICY_AUD         - the AUD tag from your Access application's "Basic information"
+  //   PRODUCTIVE_ORG_ID         - your Productive organization ID
+  //   USER_MAPPING              - JSON: { "<email>": { "userId": <id>, "apiToken": "<token>" }, ... }
+  //   ACCESS_CLIENT_ID          - "Client ID" from the Access for SaaS app
+  //   ACCESS_CLIENT_SECRET      - "Client secret" from the Access for SaaS app
+  //   ACCESS_TOKEN_URL          - "Token endpoint" from the Access for SaaS app
+  //   ACCESS_AUTHORIZATION_URL  - "Authorization endpoint" from the Access for SaaS app
+  //   ACCESS_JWKS_URL           - "Key endpoint" from the Access for SaaS app
+  //   COOKIE_ENCRYPTION_KEY     - random 32-byte hex (e.g. `openssl rand -hex 32`)
   /**
    * Smart Placement
    * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

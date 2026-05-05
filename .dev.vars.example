@@ -1,0 +1,15 @@
+# Productive MCP — local development secrets template.
+# Copy to `.dev.vars` and fill in values. `.dev.vars` is loaded by `wrangler dev`.
+
+PRODUCTIVE_ORG_ID=<your Productive org id>
+USER_MAPPING={"alice@example.com":{"userId":123,"apiToken":"..."}}
+
+# From the Cloudflare dashboard → Access → Applications → <SaaS app> → OIDC
+ACCESS_CLIENT_ID=<Copy from "Client ID" in dash>
+ACCESS_CLIENT_SECRET=<Copy from "Client secret" in dash>
+ACCESS_TOKEN_URL=<Copy from "Token endpoint" in dash>
+ACCESS_AUTHORIZATION_URL=<Copy from "Authorization endpoint" in dash>
+ACCESS_JWKS_URL=<Copy from "Key endpoint" in dash>
+
+# Generate with: openssl rand -hex 32
+COOKIE_ENCRYPTION_KEY=<32 random bytes hex>
