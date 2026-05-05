@@ -85,7 +85,7 @@ export function createMcpServer(config: Config): Server {
       moveTaskToListTool,
       addToBacklogTool,
       taskRepositionDefinition,
-      deleteTaskDefinition,
+      // deleteTaskDefinition,
       // Folders
       listFoldersTool,
       getFolderTool,
@@ -100,7 +100,7 @@ export function createMcpServer(config: Config): Server {
       listCommentsDefinition,
       getCommentDefinition,
       updateCommentDefinition,
-      deleteCommentDefinition,
+      // deleteCommentDefinition,
       pinCommentDefinition,
       unpinCommentDefinition,
       addCommentReactionDefinition,
@@ -109,20 +109,20 @@ export function createMcpServer(config: Config): Server {
       getTodoDefinition,
       createTodoDefinition,
       updateTodoDefinition,
-      deleteTodoDefinition,
+      // deleteTodoDefinition,
       // Pages
       listPagesDefinition,
       getPageDefinition,
       createPageDefinition,
       updatePageDefinition,
-      deletePageDefinition,
+      // deletePageDefinition,
       movePageDefinition,
       copyPageDefinition,
       // Task Dependencies
       listTaskDependenciesDefinition,
       getTaskDependencyDefinition,
       createTaskDependencyDefinition,
-      deleteTaskDependencyDefinition,
+      // deleteTaskDependencyDefinition,
     ],
   }));
   
@@ -241,8 +241,8 @@ export function createMcpServer(config: Config): Server {
         }
         return await taskRepositionTool(apiClient, args as z.infer<typeof taskRepositionSchema>);
 
-      case 'delete_task':
-        return await deleteTaskTool(apiClient, args);
+      // case 'delete_task':
+      //   return await deleteTaskTool(apiClient, args);
 
       // Folders
       case 'list_folders':
@@ -271,8 +271,8 @@ export function createMcpServer(config: Config): Server {
         return await getCommentTool(apiClient, args);
       case 'update_comment':
         return await updateCommentTool(apiClient, args);
-      case 'delete_comment':
-        return await deleteCommentTool(apiClient, args);
+      // case 'delete_comment':
+      //   return await deleteCommentTool(apiClient, args);
       case 'pin_comment':
         return await pinCommentTool(apiClient, args);
       case 'unpin_comment':
@@ -289,8 +289,8 @@ export function createMcpServer(config: Config): Server {
         return await createTodoTool(apiClient, args);
       case 'update_todo':
         return await updateTodoTool(apiClient, args);
-      case 'delete_todo':
-        return await deleteTodoTool(apiClient, args);
+      // case 'delete_todo':
+      //   return await deleteTodoTool(apiClient, args);
 
       // Pages
       case 'list_pages':
@@ -301,8 +301,8 @@ export function createMcpServer(config: Config): Server {
         return await createPageTool(apiClient, args);
       case 'update_page':
         return await updatePageTool(apiClient, args);
-      case 'delete_page':
-        return await deletePageTool(apiClient, args);
+      // case 'delete_page':
+      //   return await deletePageTool(apiClient, args);
       case 'move_page':
         return await movePageTool(apiClient, args);
       case 'copy_page':
@@ -315,8 +315,8 @@ export function createMcpServer(config: Config): Server {
         return await getTaskDependencyTool(apiClient, args);
       case 'create_task_dependency':
         return await createTaskDependencyTool(apiClient, args);
-      case 'delete_task_dependency':
-        return await deleteTaskDependencyTool(apiClient, args);
+      // case 'delete_task_dependency':
+      //   return await deleteTaskDependencyTool(apiClient, args);
 
       default:
         throw new Error(`Unknown tool: ${name}`);
