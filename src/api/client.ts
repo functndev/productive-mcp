@@ -326,7 +326,7 @@ export class ProductiveAPIClient {
 
     while (true) {
       const queryParams = new URLSearchParams();
-      queryParams.append('filter[person_type]', 'user');
+      queryParams.append('filter[is_user]', 'true');
       queryParams.append('filter[status]', '1'); // 1 = active
       queryParams.append('page[size]', pageSize.toString());
       queryParams.append('page[number]', page.toString());
@@ -335,7 +335,11 @@ export class ProductiveAPIClient {
         `people?${queryParams.toString()}`
       );
 
-      all.push(...response.data);
+      all.push(
+        ...response.data.filter(
+          (person) => !person.attributes.agent && !person.attributes.placeholder
+        )
+      );
       if (response.data.length < pageSize) break;
       page += 1;
       if (page > 50) break; // safety cap
