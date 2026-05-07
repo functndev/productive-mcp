@@ -18,6 +18,9 @@ export class ProductiveMcp extends McpAgent<Env, unknown, Props> {
       PRODUCTIVE_USER_ID: this.props?.productiveUserId,
       PRODUCTIVE_ORG_ID: env.PRODUCTIVE_ORG_ID,
       PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
+      // Admin token resolved from any USER_MAPPING entry flagged isAdmin:true.
+      // Only used by tools that need elevated access (e.g. list_users).
+      PRODUCTIVE_ADMIN_API_TOKEN: this.props?.adminApiToken,
     });
 
     this.server = createMcpServer(config);

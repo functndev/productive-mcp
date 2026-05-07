@@ -312,6 +312,37 @@ export class ProductiveAPIClient {
     
     return this.makeRequest<ProductiveResponse<ProductivePerson>>(path);
   }
+
+  /**
+   * List internal Productive users (people who can log in), excluding contacts,
+   * placeholders and agents. Returns active users only.
+   *
+   * Admin-only on the calling side. Paginates until all pages are fetched.
+   */
+  async listUsers(): Promise<ProductivePerson[]> {
+    const all: ProductivePerson[] = [];
+    let page = 1;
+    const pageSize = 200;
+
+    while (true) {
+      const queryParams = new URLSearchParams();
+      queryParams.append('filter[person_type]', 'user');
+      queryParams.append('filter[status]', '1'); // 1 = active
+      queryParams.append('page[size]', pageSize.toString());
+      queryParams.append('page[number]', page.toString());
+
+      const response = await this.makeRequest<ProductiveResponse<ProductivePerson>>(
+        `people?${queryParams.toString()}`
+      );
+
+      all.push(...response.data);
+      if (response.data.length < pageSize) break;
+      page += 1;
+      if (page > 50) break; // safety cap
+    }
+
+    return all;
+  }
   
   async getTask(taskId: string): Promise<ProductiveSingleResponse<ProductiveTask>> {
     return this.makeRequest<ProductiveSingleResponse<ProductiveTask>>(`tasks/${taskId}`);

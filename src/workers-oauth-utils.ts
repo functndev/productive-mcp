@@ -990,5 +990,7 @@ export interface Props {
   name: string;
   productiveUserId: string;
   productiveApiToken: string;
+  /** API token of an admin user, used by tools that need elevated access. */
+  adminApiToken?: string;
   [key: string]: unknown;
 }

@@ -8,11 +8,17 @@ const configSchema = z.object({
     .string()
     .url()
     .default("https://api.productive.io/api/v2/"),
+  /**
+   * Optional API token of a user with admin privileges. Used only by tools
+   * that require elevated access (e.g. listing all users). Resolved in
+   * access-handler from any USER_MAPPING entry flagged with isAdmin:true.
+   */
+  PRODUCTIVE_ADMIN_API_TOKEN: z.string().optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
 
-export function parseConfig(env: Record<string, string | undefined>): Config {
+export function parseConfig(env: Record<string, unknown>): Config {
   const result = configSchema.safeParse(env);
 
   if (!result.success) {

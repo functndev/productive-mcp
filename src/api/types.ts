@@ -262,6 +262,9 @@ export interface ProductivePerson {
     last_name: string;
     title?: string;
     role?: string;
+    role_id?: number;
+    person_type?: string;
+    status?: number;
     is_active?: boolean;
     avatar_url?: string;
     created_at: string;

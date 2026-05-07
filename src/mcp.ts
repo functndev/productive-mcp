@@ -10,6 +10,7 @@ import { myTasksTool, myTasksDefinition } from './tools/my-tasks.js';
 import { listBoards, createBoard, listBoardsTool, createBoardTool } from './tools/boards.js';
 import { listTaskLists, createTaskList, listTaskListsTool, createTaskListTool, getTaskList, getTaskListDefinition, updateTaskList, updateTaskListDefinition, archiveTaskList, archiveTaskListDefinition, restoreTaskList, restoreTaskListDefinition, copyTaskList, copyTaskListDefinition, moveTaskList, moveTaskListDefinition, repositionTaskList, repositionTaskListDefinition } from './tools/task-lists.js';
 import { whoAmI, whoAmITool } from './tools/whoami.js';
+import { listUsers, listUsersTool } from './tools/users.js';
 import { listActivities, listActivitiesTool } from './tools/activities.js';
 import { getRecentUpdates, getRecentUpdatesTool } from './tools/recent-updates.js';
 import { addTaskCommentTool, addTaskCommentDefinition, listCommentsTool, listCommentsDefinition, getCommentTool, getCommentDefinition, updateCommentTool, updateCommentDefinition, deleteCommentTool, deleteCommentDefinition, pinCommentTool, pinCommentDefinition, unpinCommentTool, unpinCommentDefinition, addCommentReactionTool, addCommentReactionDefinition } from './tools/comments.js';
@@ -50,6 +51,7 @@ export function createMcpServer(config: Config): Server {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       whoAmITool,
+      listUsersTool,
       listCompaniesDefinition,
       listProjectsDefinition,
       listBoardsTool,
@@ -132,7 +134,10 @@ export function createMcpServer(config: Config): Server {
     switch (name) {
       case 'whoami':
         return await whoAmI(apiClient, args, config);
-        
+
+      case 'list_users':
+        return await listUsers(apiClient, args, config.PRODUCTIVE_ADMIN_API_TOKEN);
+
       case 'list_companies':
         return await listCompaniesTool(apiClient, args);
         

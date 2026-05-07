@@ -23,6 +23,7 @@ type EnvWithOauth = Env & { OAUTH_PROVIDER: OAuthHelpers };
 interface UserEntry {
   userId: string | number;
   apiToken: string;
+  isAdmin?: boolean;
 }
 type UserMapping = Record<string, UserEntry>;
 
@@ -45,7 +46,10 @@ function parseUserMapping(raw: string | undefined): UserMapping {
 function lookupProductiveCredentials(
   email: string,
   mapping: UserMapping,
-): { productiveUserId: string; productiveApiToken: string } | null {
+): {
+  productiveUserId: string;
+  productiveApiToken: string;
+} | null {
   const normalizedEmail = email.toLowerCase();
   const entry = mapping[normalizedEmail] ?? mapping[email];
   if (!entry || !entry.apiToken || entry.userId === undefined) return null;
@@ -53,6 +57,14 @@ function lookupProductiveCredentials(
     productiveUserId: String(entry.userId),
     productiveApiToken: entry.apiToken,
   };
+}
+
+/** Find the API token of any user flagged as `isAdmin: true` in USER_MAPPING. */
+function findAdminApiToken(mapping: UserMapping): string | null {
+  for (const entry of Object.values(mapping)) {
+    if (entry?.isAdmin === true && entry.apiToken) return entry.apiToken;
+  }
+  return null;
 }
 
 export async function handleAccessRequest(
@@ -210,6 +222,7 @@ export async function handleAccessRequest(
         name,
         productiveUserId: productive.productiveUserId,
         productiveApiToken: productive.productiveApiToken,
+        adminApiToken: findAdminApiToken(mapping) ?? undefined,
       } as Props,
       request: oauthReqInfo,
       scope: oauthReqInfo.scope,
