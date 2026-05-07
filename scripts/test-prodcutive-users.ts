@@ -16,7 +16,8 @@ async function main() {
   // user (can log in), contact (external), placeholder (resource planning), agent.
   // The API rejects the string names and requires the underlying numeric IDs:
   //   1 = user, 2 = contact, 3 = placeholder, 4 = agent.
-  const path = "people?page[size]=200&filter[hrm_type_id]=1";
+  const path =
+    "people?page[size]=200&filter[hrm_type_id]=1&include=custom_role";
   const url = new URL(path, baseUrl);
 
   try {
@@ -48,14 +49,26 @@ async function main() {
     ]);
 
     if (Array.isArray(body?.data)) {
-      console.log(JSON.stringify(body.data, null, 2));
-      // console.table(
-      //   body.data.map((item: any) => ({
-      //     id: item.id,
-      //     type: item.type,
-      //     ...item.attributes,
-      //   }))
-      // );
+      const rolesById = new Map<string, string>();
+      for (const inc of (body.included ?? []) as any[]) {
+        if (inc?.type === "roles" && inc?.id) {
+          rolesById.set(String(inc.id), inc.attributes?.name ?? "");
+        }
+      }
+
+      const rows = body.data.map((item: any) => {
+        const roleId = item.relationships?.custom_role?.data?.id;
+        return {
+          id: item.id,
+          email: item.attributes?.email,
+          name: [item.attributes?.first_name, item.attributes?.last_name]
+            .filter(Boolean)
+            .join(" "),
+          role_id: roleId ?? null,
+          role: roleId ? (rolesById.get(String(roleId)) ?? null) : null,
+        };
+      });
+      console.table(rows);
       console.log(`Total users: ${body.data.length}`);
     }
   } catch (error) {

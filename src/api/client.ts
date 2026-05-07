@@ -347,14 +347,28 @@ export class ProductiveAPIClient {
    *
    * Admin-only on the calling side. Paginates until all pages are fetched.
    */
-  async listUsers(): Promise<ProductivePerson[]> {
+  /**
+   * List internal Productive users (login-able accounts).
+   *
+   * Filters /people by hrm_type_id=1 (employees) and sideloads each person's
+   * custom_role so callers can resolve human-readable role names (this org
+   * uses custom roles, so role_id alone is not enough).
+   *
+   * Admin-only on the calling side. Paginates until all pages are fetched.
+   */
+  async listUsers(): Promise<{
+    people: ProductivePerson[];
+    rolesById: Map<string, string>;
+  }> {
     const people: ProductivePerson[] = [];
+    const rolesById = new Map<string, string>();
     let page = 1;
     const pageSize = 200;
 
     while (true) {
       const queryParams = new URLSearchParams();
       queryParams.append("filter[hrm_type_id]", "1");
+      queryParams.append("include", "custom_role");
       queryParams.append("page[size]", pageSize.toString());
       queryParams.append("page[number]", page.toString());
 
@@ -363,12 +377,20 @@ export class ProductiveAPIClient {
       >(`people?${queryParams.toString()}`);
 
       people.push(...response.data);
+      for (const inc of response.included ?? []) {
+        if (inc.type === "roles" && inc.id) {
+          const name =
+            (inc.attributes as { name?: string } | undefined)?.name ?? "";
+          rolesById.set(String(inc.id), name);
+        }
+      }
+
       if (response.data.length < pageSize) break;
       page += 1;
       if (page > 50) break; // safety cap
     }
 
-    return people;
+    return { people, rolesById };
   }
 
   async getTask(

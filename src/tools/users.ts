@@ -1,27 +1,8 @@
-import { z } from 'zod';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { ProductiveAPIClient } from '../api/client.js';
+import { z } from "zod";
+import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+import { ProductiveAPIClient } from "../api/client.js";
 
 const ListUsersArgsSchema = z.object({});
-
-/**
- * Map Productive's built-in role_id to a human-readable label.
- * Source: Productive admin → "Roles" / built-in role IDs.
- */
-function roleIdToLabel(roleId: number | undefined): string {
-  switch (roleId) {
-    case 1:
-      return 'admin';
-    case 2:
-      return 'manager';
-    case 3:
-      return 'member';
-    case 4:
-      return 'guest';
-    default:
-      return roleId === undefined ? 'unknown' : `role_${roleId}`;
-  }
-}
 
 /**
  * List internal Productive users.
@@ -33,7 +14,7 @@ function roleIdToLabel(roleId: number | undefined): string {
 export async function listUsers(
   client: ProductiveAPIClient,
   args: unknown,
-  adminApiToken: string | undefined
+  adminApiToken: string | undefined,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
     ListUsersArgsSchema.parse(args);
@@ -41,7 +22,7 @@ export async function listUsers(
     if (!adminApiToken) {
       throw new McpError(
         ErrorCode.InvalidRequest,
-        'list_users requires an admin API token. Flag at least one USER_MAPPING entry with "isAdmin": true.'
+        'list_users requires an admin API token. Flag at least one USER_MAPPING entry with "isAdmin": true.',
       );
     }
 
@@ -52,22 +33,27 @@ export async function listUsers(
       PRODUCTIVE_API_TOKEN: adminApiToken,
     });
 
-    const people = await adminClient.listUsers();
+    const { people, rolesById } = await adminClient.listUsers();
 
     const users = people.map((p) => {
-      const fullName = `${p.attributes.first_name ?? ''} ${p.attributes.last_name ?? ''}`.trim();
+      const fullName =
+        `${p.attributes.first_name ?? ""} ${p.attributes.last_name ?? ""}`.trim();
+      const roleId = p.relationships?.custom_role?.data?.id as
+        | string
+        | undefined;
       return {
         id: p.id,
         name: fullName,
         email: p.attributes.email,
-        role: roleIdToLabel(p.attributes.role_id),
+        role_id: roleId ?? null,
+        role: roleId ? (rolesById.get(String(roleId)) ?? null) : null,
       };
     });
 
     return {
       content: [
         {
-          type: 'text',
+          type: "text",
           text: JSON.stringify({ count: users.length, users }, null, 2),
         },
       ],
@@ -77,22 +63,22 @@ export async function listUsers(
     if (error instanceof z.ZodError) {
       throw new McpError(
         ErrorCode.InvalidParams,
-        `Invalid parameters: ${error.issues.map((e: z.ZodIssue) => e.message).join(', ')}`
+        `Invalid parameters: ${error.issues.map((e: z.ZodIssue) => e.message).join(", ")}`,
       );
     }
     throw new McpError(
       ErrorCode.InternalError,
-      error instanceof Error ? error.message : 'Unknown error occurred'
+      error instanceof Error ? error.message : "Unknown error occurred",
     );
   }
 }
 
 export const listUsersTool = {
-  name: 'list_users',
+  name: "list_users",
   description:
-    'List all internal Productive users (active, login-able people only — excludes contacts, placeholders and agents). Returns id, name, email, role. Always executed against an admin token configured server-side.',
+    "List all internal Productive users (active, login-able people only — excludes contacts, placeholders and agents). Returns id, name, email, role. Always executed against an admin token configured server-side.",
   inputSchema: {
-    type: 'object',
+    type: "object",
     properties: {},
   },
 };
