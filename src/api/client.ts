@@ -354,7 +354,7 @@ export class ProductiveAPIClient {
 
     while (true) {
       const queryParams = new URLSearchParams();
-      queryParams.append("filter[hrm_type_id]]", "1");
+      queryParams.append("filter[hrm_type_id]", "1");
       queryParams.append("page[size]", pageSize.toString());
       queryParams.append("page[number]", page.toString());
 
