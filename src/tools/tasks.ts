@@ -375,7 +375,7 @@ const createTaskSchema = z.object({
   description_html: z.string().optional(),
   project_id: z.string().optional(),
   board_id: z.string().optional(),
-  task_list_id: z.string().optional(),
+  task_list_id: z.string().min(1, 'task_list_id is required by the Productive API'),
   assignee_id: z.string().optional(),
   due_date: z.string().optional(),
   status: z.enum(['open', 'closed']).optional().default('open'),
@@ -498,17 +498,17 @@ export async function createTaskTool(
         `Invalid parameters: ${error.issues.map((e: z.ZodIssue) => e.message).join(', ')}`
       );
     }
-    
+    if (error instanceof McpError) throw error;
     throw new McpError(
       ErrorCode.InternalError,
-      error instanceof Error ? error.message : 'Unknown error occurred'
+      `create_task failed: ${error instanceof Error ? error.message : 'Unknown error occurred'}`
     );
   }
 }
 
 export const createTaskDefinition = {
   name: 'create_task',
-  description: 'Create a new task in Productive.io. If PRODUCTIVE_USER_ID is configured, you can use "me" to refer to the configured user when assigning.',
+  description: 'Create a new task in Productive.io. IMPORTANT: task_list_id is required by the Productive API — use list_task_lists (filter by board_id) or list_boards then list_task_lists to find one. If PRODUCTIVE_USER_ID is configured, you can use "me" to refer to the configured user when assigning.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -534,7 +534,7 @@ export const createTaskDefinition = {
       },
       task_list_id: {
         type: 'string',
-        description: 'ID of the task list to add the task to',
+        description: 'ID of the task list to add the task to. Required by the Productive API — obtain via list_task_lists.',
       },
       assignee_id: {
         type: 'string',
@@ -550,7 +550,7 @@ export const createTaskDefinition = {
         description: 'Task status (default: open)',
       },
     },
-    required: ['title'],
+    required: ['title', 'task_list_id'],
   },
 };
 
