@@ -625,11 +625,6 @@ export class ProductiveAPIClient {
   async createTimeEntry(
     timeEntryData: ProductiveTimeEntryCreate,
   ): Promise<ProductiveSingleResponse<ProductiveTimeEntry>> {
-    // Debug: Log the request body
-    console.error(
-      "Creating time entry with data:",
-      JSON.stringify(timeEntryData, null, 2),
-    );
     return this.makeRequest<ProductiveSingleResponse<ProductiveTimeEntry>>(
       "time_entries",
       {
