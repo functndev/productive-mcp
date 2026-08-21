@@ -21,6 +21,7 @@
     "@types/node": "^25.6.0",
     "oxfmt": "^0.43.0",
     "oxlint": "^1.58.0",
+    "rolldown": "^1.0.0-rc.13",
     "typescript": "6.0.2",
     "wrangler": "^4.87.0"
   }
