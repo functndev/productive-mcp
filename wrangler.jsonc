@@ -13,6 +13,11 @@
   "workers_dev": false,
   "compatibility_date": "2025-03-10",
   "compatibility_flags": ["nodejs_compat"],
+  "env": {
+    "production": {
+      "tail_consumers": [{ "service": "logging-functn-com" }],
+    },
+  },
   "migrations": [
     {
       "new_sqlite_classes": ["ProductiveMcp"],
