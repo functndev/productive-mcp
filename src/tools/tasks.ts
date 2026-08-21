@@ -274,7 +274,6 @@ export async function getTaskTool(
       text += `Task List ID: ${taskListId}\n`;
       
     // If there's included data for the task list, include the name
-    console.log('Included data:', JSON.stringify(data.included));
     if (data.included && Array.isArray(data.included)) {
       const taskList = data.included.find((item: any) => item.type === 'task_lists' && item.id === taskListId);
       if (taskList) {

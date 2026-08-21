@@ -130,10 +130,11 @@ export function createMcpServer(config: Config): Server {
   
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    console.error(`[tool:${name}] called`, args ? JSON.stringify(args) : '(no args)');
+    const startedAt = Date.now();
 
     try {
-    switch (name) {
+      const result = await (async () => {
+        switch (name) {
       case 'whoami':
         return await whoAmI(apiClient, args, config);
 
@@ -328,9 +329,30 @@ export function createMcpServer(config: Config): Server {
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
+      })();
+
+      console.log(JSON.stringify({
+        event: 'tool_call',
+        tool: name,
+        userId: config.PRODUCTIVE_USER_ID,
+        userEmail: config.PRODUCTIVE_USER_EMAIL,
+        durationMs: Date.now() - startedAt,
+        outcome: 'ok',
+        args: args ?? null,
+      }));
+
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[tool:${name}] failed:`, message);
+      console.error(JSON.stringify({
+        event: 'tool_call_error',
+        tool: name,
+        userId: config.PRODUCTIVE_USER_ID,
+        userEmail: config.PRODUCTIVE_USER_EMAIL,
+        durationMs: Date.now() - startedAt,
+        error: message,
+        args: args ?? null,
+      }));
       throw error;
     }
   });

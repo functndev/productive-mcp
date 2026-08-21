@@ -16,6 +16,7 @@ export class ProductiveMcp extends McpAgent<Env, unknown, Props> {
       // Per-user API token resolved from USER_MAPPING by the Access middleware.
       PRODUCTIVE_API_TOKEN: this.props?.productiveApiToken,
       PRODUCTIVE_USER_ID: this.props?.productiveUserId,
+      PRODUCTIVE_USER_EMAIL: this.props?.email,
       PRODUCTIVE_ORG_ID: env.PRODUCTIVE_ORG_ID,
       PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
       // Admin token resolved from any USER_MAPPING entry flagged isAdmin:true.
