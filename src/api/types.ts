@@ -686,6 +686,35 @@ export interface ProductiveCommentUpdate {
   };
 }
 
+// ---- Attachment types ----
+
+export interface ProductiveAttachment {
+  id: string;
+  type: 'attachments';
+  attributes: {
+    name: string;
+    content_type: string;
+    size: number;
+    /** Permalink on files.productive.io. Requires auth to download. */
+    url: string;
+    /** Resized preview, only present for images (`resized: true`). */
+    thumb?: string;
+    temp_url?: string;
+    resized?: boolean;
+    created_at?: string;
+    deleted_at?: string | null;
+    attachable_type?: string;
+    [key: string]: unknown;
+  };
+  relationships?: {
+    creator?: { data?: { id: string; type: 'people' } };
+    task?: { data?: { id: string; type: 'tasks' } };
+    comment?: { data?: { id: string; type: 'comments' } };
+    page?: { data?: { id: string; type: 'pages' } };
+    [key: string]: any;
+  };
+}
+
 // ---- Task Dependency types ----
 
 export interface ProductiveTaskDependency {

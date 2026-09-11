@@ -33,6 +33,7 @@ import {
   ProductivePageUpdate,
   ProductiveTaskDependency,
   ProductiveTaskDependencyCreate,
+  ProductiveAttachment,
   ProductiveError,
 } from "./types.js";
 
@@ -1094,7 +1095,7 @@ export class ProductiveAPIClient {
     page?: number;
   }): Promise<ProductiveResponse<ProductiveComment>> {
     const q = new URLSearchParams();
-    q.append("include", "creator");
+    q.append("include", "creator,attachments");
     if (params?.task_id) q.append("filter[task_id]", params.task_id);
     if (params?.project_id) q.append("filter[project_id]", params.project_id);
     if (params?.discussion_id)
@@ -1112,7 +1113,7 @@ export class ProductiveAPIClient {
     commentId: string,
   ): Promise<ProductiveSingleResponse<ProductiveComment>> {
     return this.makeRequest<ProductiveSingleResponse<ProductiveComment>>(
-      `comments/${commentId}?include=creator`,
+      `comments/${commentId}?include=creator,attachments`,
     );
   }
 
@@ -1340,5 +1341,76 @@ export class ProductiveAPIClient {
     return this.makeVoidRequest(`task_dependencies/${dependencyId}`, {
       method: "DELETE",
     });
+  }
+
+  // ---- Attachment methods ----
+
+  async listAttachments(params?: {
+    task_id?: string;
+    comment_id?: string;
+    page_id?: string;
+    project_id?: string;
+    limit?: number;
+    page?: number;
+  }): Promise<ProductiveResponse<ProductiveAttachment>> {
+    const q = new URLSearchParams();
+    if (params?.task_id) q.append("filter[task_id]", params.task_id);
+    if (params?.comment_id) q.append("filter[comment_id]", params.comment_id);
+    if (params?.page_id) q.append("filter[page_id]", params.page_id);
+    if (params?.project_id) q.append("filter[project_id]", params.project_id);
+    if (params?.limit) q.append("page[size]", params.limit.toString());
+    if (params?.page) q.append("page[number]", params.page.toString());
+    const qs = q.toString();
+    return this.makeRequest<ProductiveResponse<ProductiveAttachment>>(
+      `attachments${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  async getAttachment(
+    attachmentId: string,
+  ): Promise<ProductiveSingleResponse<ProductiveAttachment>> {
+    return this.makeRequest<ProductiveSingleResponse<ProductiveAttachment>>(
+      `attachments/${attachmentId}`,
+    );
+  }
+
+  /**
+   * Download the raw bytes of an attachment.
+   *
+   * Attachment files live on `files.productive.io`, which does not accept the
+   * `X-Auth-Token` header - it authenticates via a `token` query parameter and
+   * otherwise 302s to the Productive login page. The tokenised URL is built
+   * here and never leaves this method, so the API token stays out of tool
+   * output and logs.
+   */
+  async downloadAttachmentFile(
+    fileUrl: string,
+  ): Promise<{ bytes: ArrayBuffer; contentType: string | null }> {
+    const separator = fileUrl.includes("?") ? "&" : "?";
+    const authedUrl = `${fileUrl}${separator}token=${encodeURIComponent(this.config.PRODUCTIVE_API_TOKEN)}`;
+
+    const response = await fetch(authedUrl);
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to download attachment file (status ${response.status})`,
+      );
+    }
+
+    // A rejected token is answered with a 302 to the HTML login page rather
+    // than a 4xx, so detect that explicitly instead of returning a page of
+    // HTML as if it were the file.
+    const contentType = response.headers.get("content-type");
+    const landedOnLogin = response.url.includes("/public/login");
+    const unexpectedHtml =
+      !!contentType?.includes("text/html") &&
+      !fileUrl.split("?")[0].toLowerCase().endsWith(".html");
+    if (landedOnLogin || unexpectedHtml) {
+      throw new Error(
+        "Attachment download was redirected to the Productive login page - the API token is not authorised for this file.",
+      );
+    }
+
+    return { bytes: await response.arrayBuffer(), contentType };
   }
 }

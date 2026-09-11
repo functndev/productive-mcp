@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { ProductiveIncludedResource } from '../api/types.js';
+import { ProductiveIncludedResource, ProductiveAttachment } from '../api/types.js';
+import { formatAttachmentList } from './attachments.js';
 
 type ToolResult = { content: Array<{ type: string; text: string }> };
 
@@ -12,6 +13,22 @@ function resolvePersonName(personId: string | undefined, included?: ProductiveIn
   const first = person.attributes.first_name || '';
   const last = person.attributes.last_name || '';
   return `${first} ${last}`.trim() || undefined;
+}
+
+/**
+ * Pulls the attachments belonging to one comment out of a JSON:API `included`
+ * array, so comment screenshots surface with their get_attachment IDs.
+ */
+function resolveAttachments(
+  comment: { relationships?: Record<string, any> },
+  included?: ProductiveIncludedResource[]
+): ProductiveAttachment[] {
+  const refs = comment.relationships?.attachments?.data;
+  if (!Array.isArray(refs) || !included) return [];
+  return refs
+    .map(ref => included.find(item => item.type === 'attachments' && item.id === ref.id))
+    .filter((item): item is ProductiveIncludedResource => !!item && !item.attributes?.deleted_at)
+    .map(item => item as unknown as ProductiveAttachment);
 }
 
 function truncateBody(body: string, maxLength = 200): string {
@@ -133,7 +150,12 @@ export async function listCommentsTool(
       const pinned = comment.attributes.pinned_at ? ' [PINNED]' : '';
       const body = truncateBody(comment.attributes.body);
 
-      return `- Comment ID: ${comment.id}${pinned}\n  By: ${creatorName}\n  Date: ${comment.attributes.created_at}\n  Body: ${body}`;
+      const attachments = resolveAttachments(comment, response.included);
+      const attachmentsText = attachments.length
+        ? `\n  Attachments (${attachments.length}) - read with get_attachment:\n${formatAttachmentList(attachments).split('\n').map(line => `  ${line}`).join('\n')}`
+        : '';
+
+      return `- Comment ID: ${comment.id}${pinned}\n  By: ${creatorName}\n  Date: ${comment.attributes.created_at}\n  Body: ${body}${attachmentsText}`;
     }).join('\n\n');
 
     return {
@@ -210,6 +232,12 @@ export async function getCommentTool(
     text += `Pinned: ${attrs.pinned_at ? `Yes (${attrs.pinned_at})` : 'No'}\n`;
     if (attrs.reactions) text += `Reactions: ${JSON.stringify(attrs.reactions)}\n`;
     if (attrs.version_number !== undefined) text += `Version: ${attrs.version_number}\n`;
+
+    const attachments = resolveAttachments(comment, included);
+    if (attachments.length > 0) {
+      text += `\nAttachments (${attachments.length}) - use get_attachment with the attachment ID to read one:\n`;
+      text += `${formatAttachmentList(attachments)}\n`;
+    }
 
     return {
       content: [{ type: 'text', text }],

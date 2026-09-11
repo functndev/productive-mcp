@@ -27,6 +27,7 @@ import { listSubtasksTool, listSubtasksDefinition, createSubtaskTool, createSubt
 import { listTodosTool, listTodosDefinition, getTodoTool, getTodoDefinition, createTodoTool, createTodoDefinition, updateTodoTool, updateTodoDefinition, deleteTodoTool, deleteTodoDefinition } from './tools/todos.js';
 import { listPagesTool, listPagesDefinition, getPageTool, getPageDefinition, createPageTool, createPageDefinition, updatePageTool, updatePageDefinition, deletePageTool, deletePageDefinition, movePageTool, movePageDefinition, copyPageTool, copyPageDefinition } from './tools/pages.js';
 import { listTaskDependenciesTool, listTaskDependenciesDefinition, getTaskDependencyTool, getTaskDependencyDefinition, createTaskDependencyTool, createTaskDependencyDefinition, deleteTaskDependencyTool, deleteTaskDependencyDefinition } from './tools/task-dependencies.js';
+import { listAttachmentsTool, listAttachmentsDefinition, getAttachmentTool, getAttachmentDefinition } from './tools/attachments.js';
 
 export function createMcpServer(config: Config): Server {
   // Initialize API client and config early to check user context
@@ -120,6 +121,9 @@ export function createMcpServer(config: Config): Server {
       // deletePageDefinition,
       movePageDefinition,
       copyPageDefinition,
+      // Attachments
+      listAttachmentsDefinition,
+      getAttachmentDefinition,
       // Task Dependencies
       listTaskDependenciesDefinition,
       getTaskDependencyDefinition,
@@ -315,6 +319,12 @@ export function createMcpServer(config: Config): Server {
         return await movePageTool(apiClient, args);
       case 'copy_page':
         return await copyPageTool(apiClient, args);
+
+      // Attachments
+      case 'list_attachments':
+        return await listAttachmentsTool(apiClient, args);
+      case 'get_attachment':
+        return await getAttachmentTool(apiClient, args);
 
       // Task Dependencies
       case 'list_task_dependencies':
