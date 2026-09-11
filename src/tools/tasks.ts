@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { ProductiveTaskUpdate, ProductiveIncludedResource } from '../api/types.js';
+import { ProductiveTaskUpdate, ProductiveIncludedResource, ProductiveAttachment } from '../api/types.js';
+import { formatAttachmentList } from './attachments.js';
 
 function resolvePersonName(personId: string | undefined, included?: ProductiveIncludedResource[]): string | undefined {
   if (!personId || !included) return undefined;
@@ -171,7 +172,7 @@ export async function getTaskTool(
     const config = client.getConfig();
     
     // Create URL with task_list included
-    const url = `${config.PRODUCTIVE_API_BASE_URL}tasks/${params.task_id}?include=task_list,assignee,workflow_status`;
+    const url = `${config.PRODUCTIVE_API_BASE_URL}tasks/${params.task_id}?include=task_list,assignee,workflow_status,attachments`;
     
     // Create request with proper headers from config
     const response = await fetch(url, {
@@ -281,7 +282,17 @@ export async function getTaskTool(
       }
     }
     }
-    
+
+    // Surface attachments (including images embedded in the description) so a
+    // ticket read reveals its screenshots and their get_attachment IDs.
+    const attachments = (data.included ?? []).filter(
+      (item: any) => item.type === 'attachments' && !item.attributes?.deleted_at
+    ) as ProductiveAttachment[];
+    if (attachments.length > 0) {
+      text += `\nAttachments (${attachments.length}) - use get_attachment with the attachment ID to read one:\n`;
+      text += `${formatAttachmentList(attachments)}\n`;
+    }
+
     return {
       content: [{
         type: 'text',
