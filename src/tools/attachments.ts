@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { ProductiveAttachment } from '../api/types.js';
-import { documentKind, extractDocumentText, hasTextExtension } from './attachment-text.js';
 
 /**
  * Tool results may carry binary payloads, so they are not limited to the
@@ -17,11 +16,9 @@ type ToolResult = { content: ToolContent[] };
 
 /** Raw bytes above this are refused (base64 inflates them by ~33%). */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-/** Text attachments (and text extracted from documents) are truncated past this point. */
+/** Text attachments are truncated past this point. */
 const MAX_TEXT_BYTES = 200 * 1024;
-/** Documents above this are not downloaded for text extraction. */
-const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
-/** Files returned as a raw embedded resource are capped like images. */
+/** Other files are returned raw, capped like images. */
 const MAX_RAW_BYTES = MAX_IMAGE_BYTES;
 
 function formatSize(bytes: number | undefined): string {
@@ -35,10 +32,8 @@ function isImage(contentType: string | undefined): boolean {
   return !!contentType?.startsWith('image/');
 }
 
-function isTextLike(contentType: string | undefined, filename?: string): boolean {
-  if (!contentType || contentType === 'application/octet-stream') {
-    return hasTextExtension(filename);
-  }
+function isTextLike(contentType: string | undefined): boolean {
+  if (!contentType) return false;
   return (
     contentType.startsWith('text/') ||
     contentType === 'application/json' ||
@@ -64,11 +59,9 @@ function describeAttachment(attachment: ProductiveAttachment): string {
   const a = attachment.attributes;
   const kind = isImage(a.content_type)
     ? 'image'
-    : documentKind(a.content_type, a.name)
-      ? 'document'
-      : isTextLike(a.content_type, a.name)
-        ? 'text'
-        : 'binary';
+    : isTextLike(a.content_type)
+      ? 'text'
+      : 'binary';
   let line = `• ${a.name} (attachment ID: ${attachment.id})\n`;
   line += `  Type: ${a.content_type || 'unknown'} (${kind}) · Size: ${formatSize(a.size)}\n`;
   if (a.created_at) line += `  Created: ${a.created_at}\n`;
@@ -206,48 +199,7 @@ export const listAttachmentsDefinition = {
 const getAttachmentSchema = z.object({
   attachment_id: z.string().min(1, 'Attachment ID is required'),
   thumbnail: z.boolean().default(false).optional(),
-  raw: z.boolean().default(false).optional(),
 });
-
-function truncateText(text: string): string {
-  const encoded = new TextEncoder().encode(text);
-  if (encoded.byteLength <= MAX_TEXT_BYTES) return text;
-  return (
-    new TextDecoder().decode(encoded.slice(0, MAX_TEXT_BYTES)) +
-    `\n\n[truncated at ${formatSize(MAX_TEXT_BYTES)}]`
-  );
-}
-
-function rawFileResult(
-  url: string,
-  bytes: ArrayBuffer,
-  contentType: string | undefined,
-  note: string
-): ToolResult {
-  if (bytes.byteLength > MAX_RAW_BYTES) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `${note}\nThe file is ${formatSize(bytes.byteLength)}, above the ${formatSize(MAX_RAW_BYTES)} limit for returning it raw. Open it in Productive: ${url}`,
-        },
-      ],
-    };
-  }
-  return {
-    content: [
-      { type: 'text', text: note },
-      {
-        type: 'resource',
-        resource: {
-          uri: url,
-          mimeType: contentType || 'application/octet-stream',
-          blob: toBase64(bytes),
-        },
-      },
-    ],
-  };
-}
 
 export async function getAttachmentTool(
   client: ProductiveAPIClient,
@@ -306,33 +258,7 @@ export async function getAttachmentTool(
       };
     }
 
-    const kind = params.raw ? null : documentKind(a.content_type, a.name);
-    if (kind) {
-      if (typeof a.size === 'number' && a.size > MAX_DOCUMENT_BYTES) {
-        throw new Error(
-          `Attachment ${label} is larger than the ${formatSize(MAX_DOCUMENT_BYTES)} limit for text extraction. Open it in Productive instead: ${a.url}`
-        );
-      }
-      const { bytes } = await client.downloadAttachmentFile(a.url);
-      const text = await extractDocumentText(kind, bytes);
-      if (text) {
-        return {
-          content: [
-            { type: 'text', text: `${label} — extracted text:\n\n${truncateText(text)}` },
-          ],
-        };
-      }
-      // No text layer (e.g. a scanned PDF): hand over the file itself so a
-      // client that can render it still gets something.
-      return rawFileResult(
-        a.url,
-        bytes,
-        a.content_type,
-        `${label} contains no extractable text (possibly a scanned document).`
-      );
-    }
-
-    if (!params.raw && isTextLike(a.content_type, a.name)) {
+    if (isTextLike(a.content_type)) {
       const { bytes } = await client.downloadAttachmentFile(a.url);
       const truncated = bytes.byteLength > MAX_TEXT_BYTES;
       const slice = truncated ? bytes.slice(0, MAX_TEXT_BYTES) : bytes;
@@ -347,15 +273,37 @@ export async function getAttachmentTool(
       };
     }
 
-    // Anything else (archives, legacy Office formats, ...) is returned as an
-    // embedded resource, which clients that understand the type can open.
+    // Anything else (PDFs, Office documents, archives, ...) is returned as
+    // an embedded resource. Claude Code saves it to disk and hands Claude the
+    // path, so Claude can open it with its own file reader.
     if (typeof a.size === 'number' && a.size > MAX_RAW_BYTES) {
       throw new Error(
-        `Attachment ${label} is larger than the ${formatSize(MAX_RAW_BYTES)} limit for returning a raw file. Open it in Productive instead: ${a.url}`
+        `Attachment ${label} is larger than the ${formatSize(MAX_RAW_BYTES)} limit for returning the file. Open it in Productive instead: ${a.url}`
       );
     }
-    const { bytes } = await client.downloadAttachmentFile(a.url);
-    return rawFileResult(a.url, bytes, a.content_type, `${label} — returned as a raw file:`);
+
+    const { bytes, contentType } = await client.downloadAttachmentFile(a.url);
+
+    if (bytes.byteLength > MAX_RAW_BYTES) {
+      throw new Error(
+        `Attachment ${label} is ${formatSize(bytes.byteLength)}, above the ${formatSize(MAX_RAW_BYTES)} limit for returning the file. Open it in Productive instead: ${a.url}`
+      );
+    }
+
+    return {
+      content: [
+        { type: 'text', text: `${label}:` },
+        {
+          type: 'resource',
+          resource: {
+            uri: a.url,
+            mimeType:
+              a.content_type || contentType?.split(';')[0] || 'application/octet-stream',
+            blob: toBase64(bytes),
+          },
+        },
+      ],
+    };
   } catch (error) {
     if (error instanceof z.ZodError) {
       throw new McpError(
@@ -373,7 +321,7 @@ export async function getAttachmentTool(
 export const getAttachmentDefinition = {
   name: 'get_attachment',
   description:
-    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content; PDF, Word (.docx), Excel (.xlsx) and PowerPoint (.pptx) files as their extracted text; text-based files (txt, csv, json, logs, ...) as text; anything else as a raw embedded file. Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
+    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and anything else (PDFs, Office documents, ...) as the original file (embedded resource, max 5 MB). Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -385,12 +333,6 @@ export const getAttachmentDefinition = {
         type: 'boolean',
         description:
           'For images, return the smaller resized preview instead of the original. Useful for very large screenshots (default: false)',
-        default: false,
-      },
-      raw: {
-        type: 'boolean',
-        description:
-          'Return the original file as an embedded resource instead of extracting its text. Use when layout or diagrams matter and the client can render the file type (max 5 MB, default: false)',
         default: false,
       },
     },
