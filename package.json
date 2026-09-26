@@ -15,6 +15,8 @@
     "@cloudflare/workers-oauth-provider": "^0.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "agents": "^0.9.0",
+    "fflate": "^0.8.3",
+    "unpdf": "^1.8.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
