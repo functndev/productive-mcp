@@ -9,7 +9,8 @@ import { ProductiveAttachment } from '../api/types.js';
  */
 type ToolContent =
   | { type: 'text'; text: string }
-  | { type: 'image'; data: string; mimeType: string };
+  | { type: 'image'; data: string; mimeType: string }
+  | { type: 'resource'; resource: { uri: string; mimeType: string; blob: string } };
 
 type ToolResult = { content: ToolContent[] };
 
@@ -17,6 +18,8 @@ type ToolResult = { content: ToolContent[] };
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** Text attachments are truncated past this point. */
 const MAX_TEXT_BYTES = 200 * 1024;
+/** Other files are returned raw, capped like images. */
+const MAX_RAW_BYTES = MAX_IMAGE_BYTES;
 
 function formatSize(bytes: number | undefined): string {
   if (typeof bytes !== 'number') return 'unknown size';
@@ -63,10 +66,10 @@ function describeAttachment(attachment: ProductiveAttachment): string {
   line += `  Type: ${a.content_type || 'unknown'} (${kind}) · Size: ${formatSize(a.size)}\n`;
   if (a.created_at) line += `  Created: ${a.created_at}\n`;
   if (a.attachable_type) line += `  Attached to: ${a.attachable_type}\n`;
-  line += `  URL: ${a.url}`;
-  if (kind === 'image') {
-    line += `\n  Readable: call get_attachment with attachment_id ${attachment.id} to view it`;
-  }
+  line += `  URL: ${a.url}\n`;
+  line += `  Readable: call get_attachment with attachment_id ${attachment.id} to ${
+    kind === 'image' ? 'view it' : 'read its contents'
+  }`;
   return line;
 }
 
@@ -270,14 +273,34 @@ export async function getAttachmentTool(
       };
     }
 
+    // Anything else (PDFs, Office documents, archives, ...) is returned as
+    // an embedded resource. Claude Code saves it to disk and hands Claude the
+    // path, so Claude can open it with its own file reader.
+    if (typeof a.size === 'number' && a.size > MAX_RAW_BYTES) {
+      throw new Error(
+        `Attachment ${label} is larger than the ${formatSize(MAX_RAW_BYTES)} limit for returning the file. Open it in Productive instead: ${a.url}`
+      );
+    }
+
+    const { bytes, contentType } = await client.downloadAttachmentFile(a.url);
+
+    if (bytes.byteLength > MAX_RAW_BYTES) {
+      throw new Error(
+        `Attachment ${label} is ${formatSize(bytes.byteLength)}, above the ${formatSize(MAX_RAW_BYTES)} limit for returning the file. Open it in Productive instead: ${a.url}`
+      );
+    }
+
     return {
       content: [
+        { type: 'text', text: `${label}:` },
         {
-          type: 'text',
-          text:
-            `Attachment ${label} is not a type this tool can render inline ` +
-            `(only images and text-based files are returned as content).\n` +
-            `Open it in Productive: ${a.url}`,
+          type: 'resource',
+          resource: {
+            uri: a.url,
+            mimeType:
+              a.content_type || contentType?.split(';')[0] || 'application/octet-stream',
+            blob: toBase64(bytes),
+          },
         },
       ],
     };
@@ -298,7 +321,7 @@ export async function getAttachmentTool(
 export const getAttachmentDefinition = {
   name: 'get_attachment',
   description:
-    'Download a Productive.io attachment by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text. Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot you need to look at.',
+    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and anything else (PDFs, Office documents, ...) as the original file (embedded resource, max 5 MB). Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
   inputSchema: {
     type: 'object',
     properties: {
