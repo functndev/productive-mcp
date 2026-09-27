@@ -1219,11 +1219,12 @@ export class ProductiveAPIClient {
   /**
    * Sales deals (or budgets) across all projects, filtered by activity dates.
    * Includes company, pipeline stage (deal_status), pipeline and responsible person.
+   * The endpoint has no updated_at: activity is last_activity_at, and deal vs. budget is filter[type].
    */
   async listDeals(params: {
-    updated_since?: string;
+    active_since?: string;
     created_since?: string;
-    budget_type?: number; // 1: deal, 2: budget
+    type?: number; // 1: deal, 2: budget
     sales_status_id?: number;
     company_id?: string;
     responsible_id?: string;
@@ -1233,9 +1234,9 @@ export class ProductiveAPIClient {
   }): Promise<ProductiveResponse<ProductiveDeal>> {
     const q = new URLSearchParams();
     q.append("include", "company,deal_status,pipeline,responsible");
-    if (params.updated_since) q.append("filter[updated_at][gt_eq]", params.updated_since);
+    if (params.active_since) q.append("filter[last_activity_at][gt_eq]", params.active_since);
     if (params.created_since) q.append("filter[created_at][gt_eq]", params.created_since);
-    if (params.budget_type) q.append("filter[budget_type]", params.budget_type.toString());
+    if (params.type) q.append("filter[type]", params.type.toString());
     if (params.sales_status_id) q.append("filter[sales_status_id]", params.sales_status_id.toString());
     if (params.company_id) q.append("filter[company_id]", params.company_id);
     if (params.responsible_id) q.append("filter[responsible_id]", params.responsible_id);
