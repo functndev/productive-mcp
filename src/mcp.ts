@@ -25,7 +25,7 @@ import { generateTimesheetPrompt, timesheetPromptDefinition, generateQuickTimesh
 import { listFolders, listFoldersTool, getFolder, getFolderTool, createFolder, createFolderTool, updateFolder, updateFolderTool, archiveFolder, archiveFolderTool, restoreFolder, restoreFolderTool } from './tools/folders.js';
 import { listSubtasksTool, listSubtasksDefinition, createSubtaskTool, createSubtaskDefinition } from './tools/subtasks.js';
 import { listTodosTool, listTodosDefinition, getTodoTool, getTodoDefinition, createTodoTool, createTodoDefinition, updateTodoTool, updateTodoDefinition, deleteTodoTool, deleteTodoDefinition } from './tools/todos.js';
-import { listPagesTool, listPagesDefinition, getPageTool, getPageDefinition, createPageTool, createPageDefinition, updatePageTool, updatePageDefinition, deletePageTool, deletePageDefinition, movePageTool, movePageDefinition, copyPageTool, copyPageDefinition } from './tools/pages.js';
+import { listPagesTool, listPagesDefinition, getPageTool, getPageDefinition, createPageTool, createPageDefinition, updatePageTool, updatePageDefinition, deletePageTool, deletePageDefinition, movePageTool, movePageDefinition, reorderPagesTool, reorderPagesDefinition, copyPageTool, copyPageDefinition } from './tools/pages.js';
 import { listTaskDependenciesTool, listTaskDependenciesDefinition, getTaskDependencyTool, getTaskDependencyDefinition, createTaskDependencyTool, createTaskDependencyDefinition, deleteTaskDependencyTool, deleteTaskDependencyDefinition } from './tools/task-dependencies.js';
 import { listBookingsTool, listBookingsDefinition } from './tools/bookings.js';
 import { listAttachmentsTool, listAttachmentsDefinition, getAttachmentTool, getAttachmentDefinition } from './tools/attachments.js';
@@ -121,6 +121,7 @@ export function createMcpServer(config: Config): Server {
       updatePageDefinition,
       // deletePageDefinition,
       movePageDefinition,
+      reorderPagesDefinition,
       copyPageDefinition,
       // Bookings (resource planning)
       listBookingsDefinition,
@@ -320,6 +321,8 @@ export function createMcpServer(config: Config): Server {
       //   return await deletePageTool(apiClient, args);
       case 'move_page':
         return await movePageTool(apiClient, args);
+      case 'reorder_pages':
+        return await reorderPagesTool(apiClient, args);
       case 'copy_page':
         return await copyPageTool(apiClient, args);
 

@@ -634,6 +634,8 @@ export interface ProductivePage {
     version_number?: number;
     parent_page_id?: number;
     root_page_id?: number;
+    /** Display order among siblings, ascending (0 = top); null = unpositioned, shown last */
+    position?: number | null;
     created_at: string;
     updated_at: string;
     edited_at?: string;
@@ -671,6 +673,7 @@ export interface ProductivePageUpdate {
     attributes?: {
       title?: string;
       body?: string;
+      position?: number;
     };
   };
 }
