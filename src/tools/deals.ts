@@ -34,13 +34,13 @@ export async function listDealsTool(
     const included = new Map<string, ProductiveIncludedResource>();
     for (let page = 1; page <= MAX_API_PAGES; page++) {
       const response = await client.listDeals({
-        updated_since: params.created_only ? undefined : params.since,
+        active_since: params.created_only ? undefined : params.since,
         created_since: params.created_only ? params.since : undefined,
-        budget_type: params.include_budgets ? undefined : 1,
+        type: params.include_budgets ? undefined : 1,
         sales_status_id: params.sales_status ? SALES_STATUSES[params.sales_status] : undefined,
         company_id: params.company_id,
         responsible_id: params.responsible_id,
-        sort: '-updated_at',
+        sort: '-last_activity_at',
         limit: 200,
         page,
       });
@@ -56,12 +56,17 @@ export async function listDealsTool(
     const rows = deals.map(d => {
       const a = d.attributes;
       const responsible = lookup('people', relId(d, 'responsible'));
+      const stage = lookup('deal_statuses', relId(d, 'deal_status'));
+      // deals carry no sales_status_id or won_at/lost_at: the stage's status_id says open/won/lost,
+      // sales_closed_at when it closed, and sales_status_updated_at when the stage last changed
+      const salesStatus = SALES_STATUS_NAMES[stage?.attributes?.status_id] ?? null;
+      const closedSince = onOrAfter(a.sales_closed_at);
       // what happened since `since`, most significant first
       const changes: string[] = [];
+      if (closedSince && salesStatus === 'won') changes.push('won');
+      if (closedSince && salesStatus === 'lost') changes.push('lost');
       if (onOrAfter(a.created_at)) changes.push('created');
-      if (onOrAfter(a.won_at)) changes.push('won');
-      if (onOrAfter(a.lost_at)) changes.push('lost');
-      if (onOrAfter(a.stage_updated_at)) changes.push('stage_changed');
+      if (onOrAfter(a.sales_status_updated_at)) changes.push('stage_changed');
       if (!changes.length) changes.push('updated');
       return {
         deal_id: d.id,
@@ -72,18 +77,17 @@ export async function listDealsTool(
           ? `${responsible.attributes.first_name ?? ''} ${responsible.attributes.last_name ?? ''}`.trim()
           : null,
         pipeline: lookup('pipelines', relId(d, 'pipeline'))?.attributes?.name ?? null,
-        stage: lookup('deal_statuses', relId(d, 'deal_status'))?.attributes?.name ?? null,
-        sales_status: SALES_STATUS_NAMES[a.sales_status_id] ?? null,
+        stage: stage?.attributes?.name ?? null,
+        sales_status: salesStatus,
         probability: a.probability ?? null,
         currency: a.currency ?? null,
         // raw API amounts, unconverted
         revenue: a.revenue ?? null,
         budget_total: a.budget_total ?? null,
         created_at: a.created_at ?? null,
-        updated_at: a.updated_at ?? null,
-        stage_updated_at: a.stage_updated_at ?? null,
-        won_at: a.won_at ?? null,
-        lost_at: a.lost_at ?? null,
+        last_activity_at: a.last_activity_at ?? null,
+        stage_updated_at: a.sales_status_updated_at ?? null,
+        closed_at: a.sales_closed_at ?? null,
         changes,
       };
     });
@@ -122,13 +126,13 @@ export const listDealsDefinition = {
     'List sales deals across all projects that were created or updated on/after a date, newest activity first. ' +
     'Each deal has company, responsible person, pipeline, stage, sales status (open/won/lost/delivered), ' +
     'probability, raw amounts, and `changes` saying what happened since the date ' +
-    '(created, won, lost, stage_changed, or just updated). Use for "what happened in sales this week".',
+    '(most significant first: won, lost, created, stage_changed, or just updated). Use for "what happened in sales this week".',
   inputSchema: {
     type: 'object',
     properties: {
       since: {
         type: 'string',
-        description: 'YYYY-MM-DD (required). Deals updated on/after this date (or created, with created_only)',
+        description: 'YYYY-MM-DD (required). Deals with activity on/after this date (or created, with created_only)',
       },
       created_only: {
         type: 'boolean',
