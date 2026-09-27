@@ -28,6 +28,7 @@ import { listTodosTool, listTodosDefinition, getTodoTool, getTodoDefinition, cre
 import { listPagesTool, listPagesDefinition, getPageTool, getPageDefinition, createPageTool, createPageDefinition, updatePageTool, updatePageDefinition, deletePageTool, deletePageDefinition, movePageTool, movePageDefinition, reorderPagesTool, reorderPagesDefinition, copyPageTool, copyPageDefinition } from './tools/pages.js';
 import { listTaskDependenciesTool, listTaskDependenciesDefinition, getTaskDependencyTool, getTaskDependencyDefinition, createTaskDependencyTool, createTaskDependencyDefinition, deleteTaskDependencyTool, deleteTaskDependencyDefinition } from './tools/task-dependencies.js';
 import { listBookingsTool, listBookingsDefinition } from './tools/bookings.js';
+import { listDealsTool, listDealsDefinition } from './tools/deals.js';
 import { listAttachmentsTool, listAttachmentsDefinition, getAttachmentTool, getAttachmentDefinition } from './tools/attachments.js';
 
 export function createMcpServer(config: Config): Server {
@@ -125,6 +126,8 @@ export function createMcpServer(config: Config): Server {
       copyPageDefinition,
       // Bookings (resource planning)
       listBookingsDefinition,
+      // Deals (sales)
+      listDealsDefinition,
       // Attachments
       listAttachmentsDefinition,
       getAttachmentDefinition,
@@ -329,6 +332,10 @@ export function createMcpServer(config: Config): Server {
       // Bookings
       case 'list_bookings':
         return await listBookingsTool(apiClient, args);
+
+      // Deals
+      case 'list_deals':
+        return await listDealsTool(apiClient, args);
 
       // Attachments
       case 'list_attachments':
