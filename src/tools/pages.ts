@@ -1,11 +1,18 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
+import type { ProductivePage } from '../api/types.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
 // ---- Schemas ----
 
 const PAGE_SORTS = ['created_at', 'title', 'edited_at', 'updated_at'] as const;
-const PAGE_SORT_OPTIONS = [...PAGE_SORTS, ...PAGE_SORTS.map(s => `-${s}` as const)];
+// `position` is the display order among siblings; the API can't sort by it, so it is sorted here.
+const PAGE_SORT_OPTIONS = [...PAGE_SORTS, ...PAGE_SORTS.map(s => `-${s}` as const), 'position'] as const;
+
+// Productive shows sibling pages by ascending `position` (lowest on top), unpositioned (null) pages last.
+function byPosition(a: ProductivePage, b: ProductivePage): number {
+  return (a.attributes.position ?? Number.MAX_SAFE_INTEGER) - (b.attributes.position ?? Number.MAX_SAFE_INTEGER);
+}
 
 const listPagesSchema = z.object({
   project_id: z.string().optional(),
@@ -38,6 +45,13 @@ const updatePageSchema = z.object({
   page_id: z.string().min(1, 'Page ID is required'),
   title: z.string().optional(),
   body: z.string().optional(),
+  position: z.number().int().min(0).optional(),
+});
+
+const reorderPagesSchema = z.object({
+  parent_page_id: z.string().min(1, 'Parent page ID is required'),
+  page_ids: z.array(z.string().min(1)).min(1, 'At least one page ID is required')
+    .refine(ids => new Set(ids).size === ids.length, 'page_ids must not contain duplicates'),
 });
 
 const deletePageSchema = z.object({
@@ -67,9 +81,10 @@ export async function listPagesTool(
       project_id: params.project_id,
       parent_page_id: params.parent_page_id,
       root_page_id: params.root_page_id,
-      sort: params.sort,
+      sort: params.sort === 'position' ? undefined : params.sort,
       limit: params.limit,
     });
+    if (params.sort === 'position' && response?.data) response.data.sort(byPosition);
 
     if (!response || !response.data || response.data.length === 0) {
       return {
@@ -85,6 +100,7 @@ export async function listPagesTool(
       return `• ${page.attributes.title} (ID: ${page.id})
   ${projectId ? `Project ID: ${projectId}` : ''}
   ${page.attributes.parent_page_id != null ? `Parent page ID: ${page.attributes.parent_page_id}` : ''}
+  ${page.attributes.position != null ? `Position: ${page.attributes.position}` : ''}
   ${page.attributes.created_at ? `Created at: ${page.attributes.created_at}` : ''}
   ${page.attributes.edited_at ? `Edited at: ${page.attributes.edited_at}` : ''}
   ${page.attributes.version_number != null ? `Version: ${page.attributes.version_number}` : ''}`;
@@ -230,9 +246,10 @@ export async function updatePageTool(
   try {
     const params = updatePageSchema.parse(args);
 
-    const attributes: { title?: string; body?: string } = {};
+    const attributes: { title?: string; body?: string; position?: number } = {};
     if (params.title !== undefined) attributes.title = params.title;
     if (params.body !== undefined) attributes.body = params.body;
+    if (params.position !== undefined) attributes.position = params.position;
 
     const response = await client.updatePage(params.page_id, {
       data: {
@@ -247,6 +264,7 @@ export async function updatePageTool(
     let text = `Page updated successfully!\n`;
     text += `Title: ${page.attributes.title}\n`;
     text += `Page ID: ${page.id}\n`;
+    if (page.attributes.position != null) text += `Position: ${page.attributes.position}\n`;
     text += `Updated at: ${page.attributes.updated_at}`;
 
     return {
@@ -328,6 +346,67 @@ export async function movePageTool(
   }
 }
 
+/**
+ * Put the direct sub-pages of a page in the given order by writing contiguous positions (0 = top).
+ * Children not named in page_ids keep their current relative order below the named ones.
+ */
+export async function reorderPagesTool(
+  client: ProductiveAPIClient,
+  args: unknown
+): Promise<{ content: Array<{ type: string; text: string }> }> {
+  try {
+    const params = reorderPagesSchema.parse(args);
+
+    const children: ProductivePage[] = [];
+    for (let pageNumber = 1; ; pageNumber++) {
+      const response = await client.listPages({ parent_page_id: params.parent_page_id, limit: 200, page: pageNumber });
+      children.push(...(response.data ?? []));
+      if ((response.data?.length ?? 0) < 200) break;
+    }
+
+    const byId = new Map(children.map(p => [p.id, p]));
+    const unknown = params.page_ids.filter(id => !byId.has(id));
+    if (unknown.length > 0) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Not direct sub-pages of ${params.parent_page_id}: ${unknown.join(', ')}`
+      );
+    }
+
+    const named = new Set(params.page_ids);
+    const rest = children.filter(p => !named.has(p.id)).sort(byPosition);
+    const desired = [...params.page_ids.map(id => byId.get(id)!), ...rest];
+
+    let writes = 0;
+    for (const [position, page] of desired.entries()) {
+      if (page.attributes.position === position) continue;
+      await client.updatePage(page.id, { data: { type: 'pages', id: page.id, attributes: { position } } });
+      writes++;
+    }
+
+    const lines = desired.map((p, i) => `${String(i).padStart(3)}. ${p.attributes.title} (ID: ${p.id})`);
+    return {
+      content: [{
+        type: 'text',
+        text: `Reordered ${desired.length} sub-pages of ${params.parent_page_id} (${writes} position write${writes !== 1 ? 's' : ''}), top first:\n${lines.join('\n')}`,
+      }],
+    };
+  } catch (error) {
+    if (error instanceof McpError) throw error;
+    if (error instanceof z.ZodError) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Invalid parameters: ${error.issues.map((e: z.ZodIssue) => e.message).join(', ')}`
+      );
+    }
+
+    throw new McpError(
+      ErrorCode.InternalError,
+      error instanceof Error ? error.message : 'Unknown error occurred'
+    );
+  }
+}
+
 export async function copyPageTool(
   client: ProductiveAPIClient,
   args: unknown
@@ -386,7 +465,7 @@ export const listPagesDefinition = {
       sort: {
         type: 'string',
         enum: PAGE_SORT_OPTIONS,
-        description: 'Sort pages by a field; prefix with "-" for descending (e.g. "-created_at" for newest first)',
+        description: 'Sort pages by a field; prefix with "-" for descending (e.g. "-created_at" for newest first). "position" returns siblings in the order Productive displays them (top first); combine it with parent_page_id.',
       },
       limit: {
         type: 'number',
@@ -461,6 +540,10 @@ export const updatePageDefinition = {
         type: 'string',
         description: 'New body content for the page. Supports HTML formatting.',
       },
+      position: {
+        type: 'number',
+        description: 'Display position among sibling pages (0 = top, ascending). To order a whole set of siblings, use reorder_pages.',
+      },
     },
     required: ['page_id'],
   },
@@ -497,6 +580,26 @@ export const movePageDefinition = {
       },
     },
     required: ['page_id', 'target_doc_id'],
+  },
+};
+
+export const reorderPagesDefinition = {
+  name: 'reorder_pages',
+  description: 'Set the display order of the direct sub-pages of a page in Productive.io. Pass the sub-page IDs top first; sub-pages you leave out keep their current relative order below them. Only positions are written: nothing is moved, renamed or deleted.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      parent_page_id: {
+        type: 'string',
+        description: 'ID of the page whose sub-pages to reorder (required)',
+      },
+      page_ids: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Sub-page IDs in the desired order, top first (required). Each must be a direct sub-page of parent_page_id.',
+      },
+    },
+    required: ['parent_page_id', 'page_ids'],
   },
 };
 
