@@ -1214,6 +1214,37 @@ export class ProductiveAPIClient {
     return this.makeVoidRequest(`todos/${todoId}`, { method: "DELETE" });
   }
 
+  // ---- Deal methods ----
+
+  /**
+   * Sales deals (or budgets) across all projects, filtered by activity dates.
+   * Includes company, pipeline stage (deal_status), pipeline and responsible person.
+   */
+  async listDeals(params: {
+    updated_since?: string;
+    created_since?: string;
+    budget_type?: number; // 1: deal, 2: budget
+    sales_status_id?: number;
+    company_id?: string;
+    responsible_id?: string;
+    sort?: string;
+    limit?: number;
+    page?: number;
+  }): Promise<ProductiveResponse<ProductiveDeal>> {
+    const q = new URLSearchParams();
+    q.append("include", "company,deal_status,pipeline,responsible");
+    if (params.updated_since) q.append("filter[updated_at][gt_eq]", params.updated_since);
+    if (params.created_since) q.append("filter[created_at][gt_eq]", params.created_since);
+    if (params.budget_type) q.append("filter[budget_type]", params.budget_type.toString());
+    if (params.sales_status_id) q.append("filter[sales_status_id]", params.sales_status_id.toString());
+    if (params.company_id) q.append("filter[company_id]", params.company_id);
+    if (params.responsible_id) q.append("filter[responsible_id]", params.responsible_id);
+    if (params.sort) q.append("sort", params.sort);
+    if (params.limit) q.append("page[size]", params.limit.toString());
+    if (params.page) q.append("page[number]", params.page.toString());
+    return this.makeRequest<ProductiveResponse<ProductiveDeal>>(`deals?${q.toString()}`);
+  }
+
   // ---- Booking methods ----
 
   /**
