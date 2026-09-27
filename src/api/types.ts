@@ -674,6 +674,31 @@ export interface ProductivePageUpdate {
   };
 }
 
+// ---- Booking types ----
+
+export interface ProductiveBooking {
+  id: string;
+  type: 'bookings';
+  attributes: {
+    started_on: string;
+    ended_on: string;
+    /** 1 = minutes per day (`time`), 2 = % of capacity (`percentage`), 3 = total minutes (`total_time`) */
+    booking_method_id?: number;
+    time?: number | null;
+    percentage?: number | null;
+    total_time?: number | null;
+    draft?: boolean;
+    note?: string | null;
+    [key: string]: unknown;
+  };
+  relationships?: {
+    person?: { data: { id: string; type: 'people' } | null };
+    service?: { data: { id: string; type: 'services' } | null };
+    event?: { data: { id: string; type: 'events' } | null };
+    [key: string]: unknown;
+  };
+}
+
 // ---- Comment Update ----
 
 export interface ProductiveCommentUpdate {

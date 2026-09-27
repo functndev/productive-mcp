@@ -4,9 +4,14 @@ import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
 // ---- Schemas ----
 
+const PAGE_SORTS = ['created_at', 'title', 'edited_at', 'updated_at'] as const;
+const PAGE_SORT_OPTIONS = [...PAGE_SORTS, ...PAGE_SORTS.map(s => `-${s}` as const)];
+
 const listPagesSchema = z.object({
   project_id: z.string().optional(),
-  sort: z.enum(['created_at', 'title', 'edited_at', 'updated_at']).optional(),
+  parent_page_id: z.string().optional(),
+  root_page_id: z.string().optional(),
+  sort: z.enum(PAGE_SORT_OPTIONS).optional(),
   limit: z.number().min(1).max(200).default(30).optional(),
 });
 
@@ -53,6 +58,8 @@ export async function listPagesTool(
 
     const response = await client.listPages({
       project_id: params.project_id,
+      parent_page_id: params.parent_page_id,
+      root_page_id: params.root_page_id,
       sort: params.sort,
       limit: params.limit,
     });
@@ -70,6 +77,8 @@ export async function listPagesTool(
       const projectId = page.relationships?.project?.data?.id;
       return `• ${page.attributes.title} (ID: ${page.id})
   ${projectId ? `Project ID: ${projectId}` : ''}
+  ${page.attributes.parent_page_id != null ? `Parent page ID: ${page.attributes.parent_page_id}` : ''}
+  ${page.attributes.created_at ? `Created at: ${page.attributes.created_at}` : ''}
   ${page.attributes.edited_at ? `Edited at: ${page.attributes.edited_at}` : ''}
   ${page.attributes.version_number != null ? `Version: ${page.attributes.version_number}` : ''}`;
     }).join('\n\n');
@@ -353,7 +362,7 @@ export async function copyPageTool(
 
 export const listPagesDefinition = {
   name: 'list_pages',
-  description: 'List pages/documents from Productive.io. Optionally filter by project and sort by various fields.',
+  description: 'List pages/documents from Productive.io. Filter by project, by parent page (direct sub-pages) or by root page (the whole tree), and sort by various fields.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -361,10 +370,18 @@ export const listPagesDefinition = {
         type: 'string',
         description: 'Filter pages by project ID',
       },
+      parent_page_id: {
+        type: 'string',
+        description: 'Only direct sub-pages of this page',
+      },
+      root_page_id: {
+        type: 'string',
+        description: 'All pages in the tree below this root page (any depth)',
+      },
       sort: {
         type: 'string',
-        enum: ['created_at', 'title', 'edited_at', 'updated_at'],
-        description: 'Sort pages by a field',
+        enum: PAGE_SORT_OPTIONS,
+        description: 'Sort pages by a field; prefix with "-" for descending (e.g. "-created_at" for newest first)',
       },
       limit: {
         type: 'number',

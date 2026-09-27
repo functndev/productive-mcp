@@ -15,6 +15,7 @@ import {
   ProductiveFolder,
   ProductiveTodo,
   ProductivePage,
+  ProductiveBooking,
   ProductiveResponse,
   ProductiveSingleResponse,
   ProductiveTaskCreate,
@@ -1213,10 +1214,39 @@ export class ProductiveAPIClient {
     return this.makeVoidRequest(`todos/${todoId}`, { method: "DELETE" });
   }
 
+  // ---- Booking methods ----
+
+  /**
+   * Resource-planning bookings overlapping [after, before]. Includes the person,
+   * the service → deal → project chain (work bookings) and the event (absences).
+   */
+  async listBookings(params: {
+    after: string;
+    before: string;
+    person_id?: string;
+    project_id?: string;
+    with_draft?: boolean;
+    limit?: number;
+    page?: number;
+  }): Promise<ProductiveResponse<ProductiveBooking>> {
+    const q = new URLSearchParams();
+    q.append("include", "person,service.deal.project,event");
+    q.append("filter[after]", params.after);
+    q.append("filter[before]", params.before);
+    if (params.person_id) q.append("filter[person_id]", params.person_id);
+    if (params.project_id) q.append("filter[project_id]", params.project_id);
+    if (params.with_draft) q.append("filter[with_draft]", "true");
+    if (params.limit) q.append("page[size]", params.limit.toString());
+    if (params.page) q.append("page[number]", params.page.toString());
+    return this.makeRequest<ProductiveResponse<ProductiveBooking>>(`bookings?${q.toString()}`);
+  }
+
   // ---- Page methods ----
 
   async listPages(params?: {
     project_id?: string;
+    parent_page_id?: string;
+    root_page_id?: string;
     creator_id?: string;
     sort?: string;
     limit?: number;
@@ -1224,6 +1254,8 @@ export class ProductiveAPIClient {
   }): Promise<ProductiveResponse<ProductivePage>> {
     const q = new URLSearchParams();
     if (params?.project_id) q.append("filter[project_id]", params.project_id);
+    if (params?.parent_page_id) q.append("filter[parent_page_id]", params.parent_page_id);
+    if (params?.root_page_id) q.append("filter[root_page_id]", params.root_page_id);
     if (params?.creator_id) q.append("filter[creator_id]", params.creator_id);
     if (params?.sort) q.append("sort", params.sort);
     if (params?.limit) q.append("page[size]", params.limit.toString());
