@@ -19,13 +19,20 @@ const getPageSchema = z.object({
   page_id: z.string().min(1, 'Page ID is required'),
 });
 
+// Productive only accepts a project on root pages; sub-pages inherit it from their root.
 const createPageSchema = z.object({
-  project_id: z.string().min(1, 'Project ID is required'),
+  project_id: z.string().min(1).optional(),
   title: z.string().min(1, 'Title is required'),
   body: z.string().optional(),
   parent_page_id: z.number().optional().describe('ID of parent page (must also set root_page_id)'),
   root_page_id: z.number().optional().describe('ID of root page in the hierarchy (must also set parent_page_id)'),
-});
+})
+  .refine(p => (p.parent_page_id == null) === (p.root_page_id == null), {
+    message: 'parent_page_id and root_page_id must be set together',
+  })
+  .refine(p => p.parent_page_id != null || p.project_id, {
+    message: 'project_id is required for a root page (no parent_page_id)',
+  });
 
 const updatePageSchema = z.object({
   page_id: z.string().min(1, 'Page ID is required'),
@@ -180,11 +187,9 @@ export async function createPageTool(
           parent_page_id: params.parent_page_id,
           root_page_id: params.root_page_id,
         },
-        relationships: {
-          project: {
-            data: { id: params.project_id, type: 'projects' },
-          },
-        },
+        ...(params.parent_page_id == null && params.project_id
+          ? { relationships: { project: { data: { id: params.project_id, type: 'projects' } } } }
+          : {}),
       },
     });
 
@@ -193,7 +198,7 @@ export async function createPageTool(
     let text = `Page created successfully!\n`;
     text += `Title: ${page.attributes.title}\n`;
     text += `Page ID: ${page.id}\n`;
-    text += `Project ID: ${params.project_id}\n`;
+    if (params.parent_page_id == null) text += `Project ID: ${params.project_id}\n`;
     if (params.parent_page_id != null) text += `Parent page ID: ${params.parent_page_id}\n`;
     text += `Created at: ${page.attributes.created_at}`;
 
@@ -415,7 +420,7 @@ export const createPageDefinition = {
     properties: {
       project_id: {
         type: 'string',
-        description: 'ID of the project to create the page in (required)',
+        description: 'ID of the project to create the page in. Required for root pages; omit it for sub-pages, which inherit the project of their root page.',
       },
       title: {
         type: 'string',
@@ -434,7 +439,7 @@ export const createPageDefinition = {
         description: 'ID of the root (top-level) page in the hierarchy. Must be set together with parent_page_id. For direct children of root, set both to the root page ID.',
       },
     },
-    required: ['project_id', 'title'],
+    required: ['title'],
   },
 };
 

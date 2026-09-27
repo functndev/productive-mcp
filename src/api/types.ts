@@ -657,7 +657,8 @@ export interface ProductivePageCreate {
       parent_page_id?: number;
       root_page_id?: number;
     };
-    relationships: {
+    // Root pages only; sub-pages inherit the project of their root page.
+    relationships?: {
       project: { data: { id: string; type: 'projects' } };
     };
   };
