@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { ProductiveAttachment } from '../api/types.js';
+import type { AttachmentLinkSigner } from '../attachment-links.js';
 
 /**
  * Tool results may carry binary payloads, so they are not limited to the
@@ -42,6 +43,12 @@ function isTextLike(contentType: string | undefined): boolean {
     contentType.endsWith('+json') ||
     contentType.endsWith('+xml')
   );
+}
+
+/** A filename that is safe to put unquoted in a shell command. */
+function safeFilename(name: string, attachmentId: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[.-]+/, '');
+  return cleaned || `attachment-${attachmentId}`;
 }
 
 /** btoa() over a whole file would blow the argument limit, so chunk it. */
@@ -199,10 +206,12 @@ export const listAttachmentsDefinition = {
 const getAttachmentSchema = z.object({
   attachment_id: z.string().min(1, 'Attachment ID is required'),
   thumbnail: z.boolean().default(false).optional(),
+  raw: z.boolean().default(false).optional(),
 });
 
 export async function getAttachmentTool(
   client: ProductiveAPIClient,
+  attachmentLinks: AttachmentLinkSigner | undefined,
   args: unknown
 ): Promise<ToolResult> {
   try {
@@ -273,9 +282,34 @@ export async function getAttachmentTool(
       };
     }
 
-    // Anything else (PDFs, Office documents, archives, ...) is returned as
-    // an embedded resource. Claude Code saves it to disk and hands Claude the
-    // path, so Claude can open it with its own file reader.
+    // Anything else (PDFs, Office documents, archives, ...) gets a signed
+    // download link. An embedded file would be simpler, but the claude.ai
+    // connector strips its blob on the way to Claude Code, which then rejects
+    // the whole result. `raw` still returns the embedded file for clients that
+    // handle it.
+    if (!params.raw && attachmentLinks) {
+      const { url, expiresAt } = await attachmentLinks.create(attachment.id, a.name);
+      const filename = safeFilename(a.name, attachment.id);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: [
+              `${label}`,
+              '',
+              `Download link (valid until ${expiresAt.toISOString()}, works without login, so do not share it):`,
+              url,
+              '',
+              'Save it and open the file from disk, e.g.:',
+              `curl -fsSL -o ${filename} '${url}'`,
+              '',
+              'If you cannot run shell commands, call get_attachment again with raw: true to receive the file itself.',
+            ].join('\n'),
+          },
+        ],
+      };
+    }
+
     if (typeof a.size === 'number' && a.size > MAX_RAW_BYTES) {
       throw new Error(
         `Attachment ${label} is larger than the ${formatSize(MAX_RAW_BYTES)} limit for returning the file. Open it in Productive instead: ${a.url}`
@@ -321,7 +355,7 @@ export async function getAttachmentTool(
 export const getAttachmentDefinition = {
   name: 'get_attachment',
   description:
-    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and anything else (PDFs, Office documents, ...) as the original file (embedded resource, max 5 MB). Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
+    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and anything else (PDFs, Office documents, ...) as a signed download link valid for 15 minutes: save it with curl and open the file from disk. Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -333,6 +367,12 @@ export const getAttachmentDefinition = {
         type: 'boolean',
         description:
           'For images, return the smaller resized preview instead of the original. Useful for very large screenshots (default: false)',
+        default: false,
+      },
+      raw: {
+        type: 'boolean',
+        description:
+          'For files other than images and text, return the file itself (embedded resource, max 5 MB) instead of a download link. Only for clients without a shell that can open embedded files; the claude.ai connector in Claude Code cannot (default: false)',
         default: false,
       },
     },

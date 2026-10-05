@@ -1439,7 +1439,7 @@ export class ProductiveAPIClient {
   }
 
   /**
-   * Download the raw bytes of an attachment.
+   * Fetch an attachment file, leaving the body unread so it can be streamed.
    *
    * Attachment files live on `files.productive.io`, which does not accept the
    * `X-Auth-Token` header - it authenticates via a `token` query parameter and
@@ -1447,9 +1447,7 @@ export class ProductiveAPIClient {
    * here and never leaves this method, so the API token stays out of tool
    * output and logs.
    */
-  async downloadAttachmentFile(
-    fileUrl: string,
-  ): Promise<{ bytes: ArrayBuffer; contentType: string | null }> {
+  async fetchAttachmentFile(fileUrl: string): Promise<Response> {
     const separator = fileUrl.includes("?") ? "&" : "?";
     const authedUrl = `${fileUrl}${separator}token=${encodeURIComponent(this.config.PRODUCTIVE_API_TOKEN)}`;
 
@@ -1470,11 +1468,23 @@ export class ProductiveAPIClient {
       !!contentType?.includes("text/html") &&
       !fileUrl.split("?")[0].toLowerCase().endsWith(".html");
     if (landedOnLogin || unexpectedHtml) {
+      await response.body?.cancel();
       throw new Error(
         "Attachment download was redirected to the Productive login page - the API token is not authorised for this file.",
       );
     }
 
-    return { bytes: await response.arrayBuffer(), contentType };
+    return response;
+  }
+
+  /** Download the raw bytes of an attachment. */
+  async downloadAttachmentFile(
+    fileUrl: string,
+  ): Promise<{ bytes: ArrayBuffer; contentType: string | null }> {
+    const response = await this.fetchAttachmentFile(fileUrl);
+    return {
+      bytes: await response.arrayBuffer(),
+      contentType: response.headers.get("content-type"),
+    };
   }
 }
