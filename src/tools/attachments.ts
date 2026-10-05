@@ -20,6 +20,8 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_BYTES = 200 * 1024;
 /** Other files are returned raw, capped like images. */
 const MAX_RAW_BYTES = MAX_IMAGE_BYTES;
+/** Workers AI refuses larger documents for Markdown conversion. */
+const MAX_CONVERT_BYTES = 4 * 1024 * 1024;
 
 function formatSize(bytes: number | undefined): string {
   if (typeof bytes !== 'number') return 'unknown size';
@@ -42,6 +44,34 @@ function isTextLike(contentType: string | undefined): boolean {
     contentType.endsWith('+json') ||
     contentType.endsWith('+xml')
   );
+}
+
+/**
+ * Converts a document (PDF, Word, Excel, OpenDocument, ...) to Markdown with
+ * Workers AI. Returns null when the format is unsupported or nothing readable
+ * came out (e.g. a scanned PDF without a text layer), so the caller can fall
+ * back to the original file.
+ */
+async function toMarkdown(
+  ai: Ai,
+  name: string,
+  bytes: ArrayBuffer,
+  contentType: string | undefined
+): Promise<string | null> {
+  try {
+    const result = await ai.toMarkdown(
+      { name, blob: new Blob([bytes], { type: contentType || 'application/octet-stream' }) },
+      { conversionOptions: { pdf: { metadata: false } } }
+    );
+    if (result.format === 'error') {
+      console.warn(`toMarkdown could not convert ${name}: ${result.error}`);
+      return null;
+    }
+    return result.data.trim() ? result.data : null;
+  } catch (error) {
+    console.warn(`toMarkdown failed for ${name}:`, error);
+    return null;
+  }
 }
 
 /** btoa() over a whole file would blow the argument limit, so chunk it. */
@@ -199,10 +229,12 @@ export const listAttachmentsDefinition = {
 const getAttachmentSchema = z.object({
   attachment_id: z.string().min(1, 'Attachment ID is required'),
   thumbnail: z.boolean().default(false).optional(),
+  raw: z.boolean().default(false).optional(),
 });
 
 export async function getAttachmentTool(
   client: ProductiveAPIClient,
+  ai: Ai,
   args: unknown
 ): Promise<ToolResult> {
   try {
@@ -273,9 +305,11 @@ export async function getAttachmentTool(
       };
     }
 
-    // Anything else (PDFs, Office documents, archives, ...) is returned as
-    // an embedded resource. Claude Code saves it to disk and hands Claude the
-    // path, so Claude can open it with its own file reader.
+    // Anything else (PDFs, Office documents, archives, ...) is converted to
+    // Markdown where possible. The original file can only go out as an
+    // embedded resource, and the claude.ai connector strips its blob on the
+    // way to Claude Code, which then rejects the whole result. Text gets
+    // through every client.
     if (typeof a.size === 'number' && a.size > MAX_RAW_BYTES) {
       throw new Error(
         `Attachment ${label} is larger than the ${formatSize(MAX_RAW_BYTES)} limit for returning the file. Open it in Productive instead: ${a.url}`
@@ -283,6 +317,28 @@ export async function getAttachmentTool(
     }
 
     const { bytes, contentType } = await client.downloadAttachmentFile(a.url);
+
+    if (!params.raw && bytes.byteLength <= MAX_CONVERT_BYTES) {
+      const markdown = await toMarkdown(
+        ai,
+        a.name,
+        bytes,
+        a.content_type || contentType?.split(';')[0]
+      );
+      if (markdown !== null) {
+        const truncated = markdown.length > MAX_TEXT_BYTES;
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `${label}, converted to Markdown (images and layout are not included; call again with raw: true for the original file):\n\n${
+                truncated ? markdown.slice(0, MAX_TEXT_BYTES) : markdown
+              }${truncated ? `\n\n[truncated at ${formatSize(MAX_TEXT_BYTES)}]` : ''}`,
+            },
+          ],
+        };
+      }
+    }
 
     if (bytes.byteLength > MAX_RAW_BYTES) {
       throw new Error(
@@ -321,7 +377,7 @@ export async function getAttachmentTool(
 export const getAttachmentDefinition = {
   name: 'get_attachment',
   description:
-    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and anything else (PDFs, Office documents, ...) as the original file (embedded resource, max 5 MB). Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
+    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and documents (PDF, Word, Excel, OpenDocument, ...) as Markdown text. Files that cannot be converted (archives, scanned PDFs, ...) come back as the original file (embedded resource, max 5 MB). Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -333,6 +389,12 @@ export const getAttachmentDefinition = {
         type: 'boolean',
         description:
           'For images, return the smaller resized preview instead of the original. Useful for very large screenshots (default: false)',
+        default: false,
+      },
+      raw: {
+        type: 'boolean',
+        description:
+          'For documents, return the original file (embedded resource, max 5 MB) instead of Markdown. Use it when diagrams or layout matter and your client can open embedded files; the claude.ai connector in Claude Code cannot (default: false)',
         default: false,
       },
     },

@@ -38,6 +38,11 @@
       "id": "2d94e8819a9a41ae97f5a3bf1ecc6f61",
     },
   ],
+  // Workers AI, used by get_attachment to convert PDFs and Office files to
+  // Markdown (env.AI.toMarkdown).
+  "ai": {
+    "binding": "AI",
+  },
   "observability": {
     "enabled": true,
   },

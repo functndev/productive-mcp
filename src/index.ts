@@ -24,7 +24,7 @@ export class ProductiveMcp extends McpAgent<Env, unknown, Props> {
       PRODUCTIVE_ADMIN_API_TOKEN: this.props?.adminApiToken,
     });
 
-    this.server = createMcpServer(config);
+    this.server = createMcpServer(config, env.AI);
   }
 }
 

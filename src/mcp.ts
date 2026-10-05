@@ -31,7 +31,7 @@ import { listBookingsTool, listBookingsDefinition } from './tools/bookings.js';
 import { listDealsTool, listDealsDefinition } from './tools/deals.js';
 import { listAttachmentsTool, listAttachmentsDefinition, getAttachmentTool, getAttachmentDefinition } from './tools/attachments.js';
 
-export function createMcpServer(config: Config): Server {
+export function createMcpServer(config: Config, ai: Ai): Server {
   // Initialize API client and config early to check user context
   const hasConfiguredUser = !!config.PRODUCTIVE_USER_ID;
   
@@ -341,7 +341,7 @@ export function createMcpServer(config: Config): Server {
       case 'list_attachments':
         return await listAttachmentsTool(apiClient, args);
       case 'get_attachment':
-        return await getAttachmentTool(apiClient, args);
+        return await getAttachmentTool(apiClient, ai, args);
 
       // Task Dependencies
       case 'list_task_dependencies':

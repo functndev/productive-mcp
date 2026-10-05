@@ -8,6 +8,7 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		OAUTH_KV: KVNamespace;
+		AI: Ai;
 		PRODUCTIVE_API_BASE_URL: "https://api.productive.io/api/v2/";
 		MCP_OBJECT: DurableObjectNamespace<import("./src/index").ProductiveMcp>;
 	}
