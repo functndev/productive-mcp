@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { ProductiveAttachment } from '../api/types.js';
+import type { AttachmentLinkSigner } from '../attachment-links.js';
 
 /**
  * Tool results may carry binary payloads, so they are not limited to the
@@ -20,8 +21,6 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_BYTES = 200 * 1024;
 /** Other files are returned raw, capped like images. */
 const MAX_RAW_BYTES = MAX_IMAGE_BYTES;
-/** Workers AI refuses larger documents for Markdown conversion. */
-const MAX_CONVERT_BYTES = 4 * 1024 * 1024;
 
 function formatSize(bytes: number | undefined): string {
   if (typeof bytes !== 'number') return 'unknown size';
@@ -46,32 +45,10 @@ function isTextLike(contentType: string | undefined): boolean {
   );
 }
 
-/**
- * Converts a document (PDF, Word, Excel, OpenDocument, ...) to Markdown with
- * Workers AI. Returns null when the format is unsupported or nothing readable
- * came out (e.g. a scanned PDF without a text layer), so the caller can fall
- * back to the original file.
- */
-async function toMarkdown(
-  ai: Ai,
-  name: string,
-  bytes: ArrayBuffer,
-  contentType: string | undefined
-): Promise<string | null> {
-  try {
-    const result = await ai.toMarkdown(
-      { name, blob: new Blob([bytes], { type: contentType || 'application/octet-stream' }) },
-      { conversionOptions: { pdf: { metadata: false } } }
-    );
-    if (result.format === 'error') {
-      console.warn(`toMarkdown could not convert ${name}: ${result.error}`);
-      return null;
-    }
-    return result.data.trim() ? result.data : null;
-  } catch (error) {
-    console.warn(`toMarkdown failed for ${name}:`, error);
-    return null;
-  }
+/** A filename that is safe to put unquoted in a shell command. */
+function safeFilename(name: string, attachmentId: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[.-]+/, '');
+  return cleaned || `attachment-${attachmentId}`;
 }
 
 /** btoa() over a whole file would blow the argument limit, so chunk it. */
@@ -234,7 +211,7 @@ const getAttachmentSchema = z.object({
 
 export async function getAttachmentTool(
   client: ProductiveAPIClient,
-  ai: Ai,
+  attachmentLinks: AttachmentLinkSigner | undefined,
   args: unknown
 ): Promise<ToolResult> {
   try {
@@ -305,11 +282,34 @@ export async function getAttachmentTool(
       };
     }
 
-    // Anything else (PDFs, Office documents, archives, ...) is converted to
-    // Markdown where possible. The original file can only go out as an
-    // embedded resource, and the claude.ai connector strips its blob on the
-    // way to Claude Code, which then rejects the whole result. Text gets
-    // through every client.
+    // Anything else (PDFs, Office documents, archives, ...) gets a signed
+    // download link. An embedded file would be simpler, but the claude.ai
+    // connector strips its blob on the way to Claude Code, which then rejects
+    // the whole result. `raw` still returns the embedded file for clients that
+    // handle it.
+    if (!params.raw && attachmentLinks) {
+      const { url, expiresAt } = await attachmentLinks.create(attachment.id, a.name);
+      const filename = safeFilename(a.name, attachment.id);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: [
+              `${label}`,
+              '',
+              `Download link (valid until ${expiresAt.toISOString()}, works without login, so do not share it):`,
+              url,
+              '',
+              'Save it and open the file from disk, e.g.:',
+              `curl -fsSL -o ${filename} '${url}'`,
+              '',
+              'If you cannot run shell commands, call get_attachment again with raw: true to receive the file itself.',
+            ].join('\n'),
+          },
+        ],
+      };
+    }
+
     if (typeof a.size === 'number' && a.size > MAX_RAW_BYTES) {
       throw new Error(
         `Attachment ${label} is larger than the ${formatSize(MAX_RAW_BYTES)} limit for returning the file. Open it in Productive instead: ${a.url}`
@@ -317,28 +317,6 @@ export async function getAttachmentTool(
     }
 
     const { bytes, contentType } = await client.downloadAttachmentFile(a.url);
-
-    if (!params.raw && bytes.byteLength <= MAX_CONVERT_BYTES) {
-      const markdown = await toMarkdown(
-        ai,
-        a.name,
-        bytes,
-        a.content_type || contentType?.split(';')[0]
-      );
-      if (markdown !== null) {
-        const truncated = markdown.length > MAX_TEXT_BYTES;
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `${label}, converted to Markdown (images and layout are not included; call again with raw: true for the original file):\n\n${
-                truncated ? markdown.slice(0, MAX_TEXT_BYTES) : markdown
-              }${truncated ? `\n\n[truncated at ${formatSize(MAX_TEXT_BYTES)}]` : ''}`,
-            },
-          ],
-        };
-      }
-    }
 
     if (bytes.byteLength > MAX_RAW_BYTES) {
       throw new Error(
@@ -377,7 +355,7 @@ export async function getAttachmentTool(
 export const getAttachmentDefinition = {
   name: 'get_attachment',
   description:
-    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and documents (PDF, Word, Excel, OpenDocument, ...) as Markdown text. Files that cannot be converted (archives, scanned PDFs, ...) come back as the original file (embedded resource, max 5 MB). Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
+    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and anything else (PDFs, Office documents, ...) as a signed download link valid for 15 minutes: save it with curl and open the file from disk. Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -394,7 +372,7 @@ export const getAttachmentDefinition = {
       raw: {
         type: 'boolean',
         description:
-          'For documents, return the original file (embedded resource, max 5 MB) instead of Markdown. Use it when diagrams or layout matter and your client can open embedded files; the claude.ai connector in Claude Code cannot (default: false)',
+          'For files other than images and text, return the file itself (embedded resource, max 5 MB) instead of a download link. Only for clients without a shell that can open embedded files; the claude.ai connector in Claude Code cannot (default: false)',
         default: false,
       },
     },

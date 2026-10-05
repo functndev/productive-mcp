@@ -992,5 +992,7 @@ export interface Props {
   productiveApiToken: string;
   /** API token of an admin user, used by tools that need elevated access. */
   adminApiToken?: string;
+  /** Origin the MCP client connected to, set per request in index.ts. */
+  origin?: string;
   [key: string]: unknown;
 }

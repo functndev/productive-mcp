@@ -20,14 +20,14 @@ import {
 type EnvWithOauth = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
 /** Per-user record stored in the USER_MAPPING secret. */
-interface UserEntry {
+export interface UserEntry {
   userId: string | number;
   apiToken: string;
   isAdmin?: boolean;
 }
 type UserMapping = Record<string, UserEntry>;
 
-function parseUserMapping(raw: string | undefined): UserMapping {
+export function parseUserMapping(raw: string | undefined): UserMapping {
   if (!raw) throw new Error("USER_MAPPING secret is not set");
   let parsed: unknown;
   try {

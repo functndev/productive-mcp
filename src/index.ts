@@ -4,6 +4,11 @@ import { handleAccessRequest } from "./access-handler.js";
 import type { Props } from "./workers-oauth-utils.js";
 import { createMcpServer } from "./mcp.js";
 import { parseConfig, type Config } from "./config/index.js";
+import {
+  ATTACHMENT_PATH_PREFIX,
+  createAttachmentLinkSigner,
+  handleAttachmentDownload,
+} from "./attachment-links.js";
 
 export class ProductiveMcp extends McpAgent<Env, unknown, Props> {
   // Assigned in init(). Typed loosely to accommodate the low-level Server.
@@ -24,16 +29,41 @@ export class ProductiveMcp extends McpAgent<Env, unknown, Props> {
       PRODUCTIVE_ADMIN_API_TOKEN: this.props?.adminApiToken,
     });
 
-    this.server = createMcpServer(config, env.AI);
+    const origin = this.props?.origin;
+    const attachmentLinks =
+      origin && config.PRODUCTIVE_USER_ID
+        ? createAttachmentLinkSigner(origin, env.COOKIE_ENCRYPTION_KEY, config.PRODUCTIVE_USER_ID)
+        : undefined;
+
+    this.server = createMcpServer(config, attachmentLinks);
   }
 }
 
+const mcpHandler = ProductiveMcp.serve("/mcp");
+
 export default new OAuthProvider({
-  apiHandler: ProductiveMcp.serve("/mcp") as never,
+  apiHandler: {
+    // The Worker's hostname is not in the config, so pass on the one the
+    // client connected to; get_attachment builds download links from it.
+    fetch(request: Request, env: Env, ctx: ExecutionContext<Props>) {
+      (ctx as { props: Props }).props = {
+        ...ctx.props,
+        origin: new URL(request.url).origin,
+      };
+      return mcpHandler.fetch(request, env, ctx);
+    },
+  } as never,
   apiRoute: "/mcp",
   authorizeEndpoint: "/authorize",
   clientRegistrationEndpoint: "/register",
-  // biome-ignore lint/suspicious/noExplicitAny: handler signature differs from OAuthProvider's expected type
-  defaultHandler: { fetch: handleAccessRequest as any },
+  defaultHandler: {
+    fetch(request: Request, env: Env, ctx: ExecutionContext) {
+      // Signed attachment links authenticate themselves, so they bypass OAuth.
+      if (new URL(request.url).pathname.startsWith(ATTACHMENT_PATH_PREFIX)) {
+        return handleAttachmentDownload(request, env);
+      }
+      return handleAccessRequest(request, env as never, ctx);
+    },
+  },
   tokenEndpoint: "/token",
 });
