@@ -13,11 +13,6 @@
   "workers_dev": false,
   "compatibility_date": "2025-03-10",
   "compatibility_flags": ["nodejs_compat"],
-  "env": {
-    "production": {
-      "tail_consumers": [{ "service": "logging-functn-com" }],
-    },
-  },
   "migrations": [
     {
       "new_sqlite_classes": ["ProductiveMcp"],
@@ -41,6 +36,7 @@
   "observability": {
     "enabled": true,
   },
+  "tail_consumers": [{ "service": "logging-functn-com" }],
   "upload_source_maps": true,
   "vars": {
     "PRODUCTIVE_API_BASE_URL": "https://api.productive.io/api/v2/",
