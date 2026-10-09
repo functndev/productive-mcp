@@ -1328,6 +1328,23 @@ export class ProductiveAPIClient {
     );
   }
 
+  /**
+   * Replace a page's whole body with markdown, server side. Unlike PATCHing `body`, this also
+   * replaces the copy the Productive editor keeps, so an opened page doesn't revert.
+   */
+  async replacePageBodyWithMarkdown(
+    pageId: string,
+    markdown: string,
+  ): Promise<ProductiveSingleResponse<ProductivePage>> {
+    return this.makeRequest<ProductiveSingleResponse<ProductivePage>>(
+      `pages/${pageId}/replace_body_with_markdown`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ data: { type: "pages", id: pageId, attributes: { markdown } } }),
+      },
+    );
+  }
+
   async deletePage(pageId: string): Promise<void> {
     return this.makeVoidRequest(`pages/${pageId}`, { method: "DELETE" });
   }

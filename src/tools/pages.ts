@@ -45,7 +45,10 @@ const updatePageSchema = z.object({
   page_id: z.string().min(1, 'Page ID is required'),
   title: z.string().optional(),
   body: z.string().optional(),
+  markdown: z.string().optional(),
   position: z.number().int().min(0).optional(),
+}).refine(p => p.body === undefined || p.markdown === undefined, {
+  message: 'Pass either body or markdown, not both',
 });
 
 const reorderPagesSchema = z.object({
@@ -251,13 +254,18 @@ export async function updatePageTool(
     if (params.body !== undefined) attributes.body = params.body;
     if (params.position !== undefined) attributes.position = params.position;
 
-    const response = await client.updatePage(params.page_id, {
-      data: {
-        type: 'pages',
-        id: params.page_id,
-        attributes,
-      },
-    });
+    let response = params.markdown !== undefined
+      ? await client.replacePageBodyWithMarkdown(params.page_id, params.markdown)
+      : undefined;
+    if (Object.keys(attributes).length || !response) {
+      response = await client.updatePage(params.page_id, {
+        data: {
+          type: 'pages',
+          id: params.page_id,
+          attributes,
+        },
+      });
+    }
 
     const page = response.data;
 
@@ -538,7 +546,16 @@ export const updatePageDefinition = {
       },
       body: {
         type: 'string',
-        description: 'New body content for the page. Supports HTML formatting.',
+        description:
+          'New body content for the page. Supports HTML formatting. Only for pages nobody has opened yet: ' +
+          'once a page has been opened, the Productive editor shows its own copy and saves it back over this. ' +
+          'Use markdown to rewrite an existing page.',
+      },
+      markdown: {
+        type: 'string',
+        description:
+          'Replace the whole body with this markdown (server side, also updates the editor). ' +
+          'Use this to rewrite a page that people have already opened. Not together with body.',
       },
       position: {
         type: 'number',
