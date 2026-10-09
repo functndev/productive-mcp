@@ -199,7 +199,6 @@ export async function createPageTool(
         type: 'pages',
         attributes: {
           title: params.title,
-          body: params.body,
           parent_page_id: params.parent_page_id,
           root_page_id: params.root_page_id,
         },
@@ -210,6 +209,18 @@ export async function createPageTool(
     });
 
     const page = response.data;
+
+    // The body goes through the markdown endpoint for the same reason as in update_page.
+    if (params.body !== undefined) {
+      try {
+        await client.replacePageBodyWithMarkdown(page.id, params.body);
+      } catch (error) {
+        throw new Error(
+          `Page ${page.id} was created, but setting its body failed: ` +
+          `${error instanceof Error ? error.message : String(error)}. Retry with update_page.`
+        );
+      }
+    }
 
     let text = `Page created successfully!\n`;
     text += `Title: ${page.attributes.title}\n`;
@@ -499,7 +510,7 @@ export const getPageDefinition = {
 
 export const createPageDefinition = {
   name: 'create_page',
-  description: 'Create a new page/document in Productive.io. The body supports HTML formatting.',
+  description: 'Create a new page/document in Productive.io. The body is Markdown.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -513,7 +524,7 @@ export const createPageDefinition = {
       },
       body: {
         type: 'string',
-        description: 'Body content of the page (optional). Supports HTML formatting.',
+        description: 'Body of the page as Markdown (optional).',
       },
       parent_page_id: {
         type: 'number',
