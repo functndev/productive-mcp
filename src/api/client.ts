@@ -1340,7 +1340,8 @@ export class ProductiveAPIClient {
       `pages/${pageId}/replace_body_with_markdown`,
       {
         method: "PATCH",
-        body: JSON.stringify({ data: { type: "pages", id: pageId, attributes: { markdown } } }),
+        // Not a JSON:API document: wrapped in data.attributes, the markdown lands as one literal paragraph.
+        body: JSON.stringify({ markdown }),
       },
     );
   }
