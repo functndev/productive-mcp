@@ -246,18 +246,24 @@ export async function updatePageTool(
   try {
     const params = updatePageSchema.parse(args);
 
-    const attributes: { title?: string; body?: string; position?: number } = {};
+    const attributes: { title?: string; position?: number } = {};
     if (params.title !== undefined) attributes.title = params.title;
-    if (params.body !== undefined) attributes.body = params.body;
     if (params.position !== undefined) attributes.position = params.position;
 
-    const response = await client.updatePage(params.page_id, {
-      data: {
-        type: 'pages',
-        id: params.page_id,
-        attributes,
-      },
-    });
+    // PATCHing `body` directly is undone as soon as someone has the page open: the editor
+    // saves its own copy back over it. The markdown endpoint replaces that copy as well.
+    let response = params.body !== undefined
+      ? await client.replacePageBodyWithMarkdown(params.page_id, params.body)
+      : undefined;
+    if (Object.keys(attributes).length || !response) {
+      response = await client.updatePage(params.page_id, {
+        data: {
+          type: 'pages',
+          id: params.page_id,
+          attributes,
+        },
+      });
+    }
 
     const page = response.data;
 
@@ -538,7 +544,9 @@ export const updatePageDefinition = {
       },
       body: {
         type: 'string',
-        description: 'New body content for the page. Supports HTML formatting.',
+        description:
+          'New body for the page, as Markdown. Replaces the whole body; anything not expressible in ' +
+          'Markdown (mentions, banners, colours) is lost.',
       },
       position: {
         type: 'number',
