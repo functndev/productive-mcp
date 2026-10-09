@@ -37,6 +37,24 @@ export class ProductiveMcp extends McpAgent<Env, unknown, Props> {
 
     this.server = createMcpServer(config, attachmentLinks);
   }
+
+  // The agents SDK bridges each POST /mcp to this DO over a WebSocket and
+  // closes it once the response is out, but its webSocketClose never answers
+  // the close frame. The stateless Worker invocation then waits on the
+  // half-closed socket until this DO hibernates; when that takes over 30 s
+  // the runtime cancels it and logs "waitUntil() tasks did not complete".
+  async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
+    try {
+      await super.webSocketClose(ws, code, reason, wasClean);
+    } finally {
+      try {
+        // 1005 and 1006 are reserved and must not be sent in a close frame.
+        ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
+      } catch {
+        // Already closed.
+      }
+    }
+  }
 }
 
 const mcpHandler = ProductiveMcp.serve("/mcp");
