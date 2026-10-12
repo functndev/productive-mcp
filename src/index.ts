@@ -1,6 +1,7 @@
-import OAuthProvider from "@cloudflare/workers-oauth-provider";
+import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "@modelcontextprotocol/server";
-import { handleAccessRequest } from "./access-handler.js";
+import { handleAccessRequest, recheckOnRefresh } from "./access-handler.js";
+import { allowedRegistration, isAllowedRedirectUri } from "./clients.js";
 import type { Props } from "./workers-oauth-utils.js";
 import { createMcpServer } from "./mcp.js";
 import { parseConfig, type Config } from "./config/index.js";
@@ -37,23 +38,77 @@ function handleMcpRequest(request: Request, env: Env, props: Props): Promise<Res
   return createMcpHandler(() => createMcpServer(config, attachmentLinks)).fetch(request);
 }
 
-export default new OAuthProvider({
-  apiHandler: {
-    fetch(request: Request, env: Env, ctx: ExecutionContext<Props>) {
-      return handleMcpRequest(request, env, ctx.props);
-    },
-  } as never,
-  apiRoute: "/mcp",
-  authorizeEndpoint: "/authorize",
-  clientRegistrationEndpoint: "/register",
-  defaultHandler: {
-    fetch(request: Request, env: Env, ctx: ExecutionContext) {
-      // Signed attachment links authenticate themselves, so they bypass OAuth.
-      if (new URL(request.url).pathname.startsWith(ATTACHMENT_PATH_PREFIX)) {
-        return handleAttachmentDownload(request, env);
-      }
-      return handleAccessRequest(request, env as never, ctx);
-    },
+const DAY = 24 * 60 * 60;
+
+/** Routes outside /mcp: sign-in, consent and signed attachment downloads. */
+const defaultHandler = {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const url = new URL(request.url);
+    // Signed attachment links authenticate themselves, so they bypass OAuth.
+    if (url.pathname.startsWith(ATTACHMENT_PATH_PREFIX)) {
+      return handleAttachmentDownload(request, env);
+    }
+    // Tokens only ever go to Claude or a local client (see clients.ts). Checked here too, not only
+    // at registration, because clients registered before the allowlist are still stored.
+    const redirectUri = url.searchParams.get("redirect_uri");
+    if (url.pathname === "/authorize" && redirectUri && !isAllowedRedirectUri(redirectUri)) {
+      return new Response("This MCP server only signs in Claude and local MCP clients.", { status: 400 });
+    }
+    return handleAccessRequest(request, env as never, ctx);
   },
-  tokenEndpoint: "/token",
-});
+};
+
+// Options depend on env (PUBLIC_URL), so the provider is built on first use per isolate.
+let provider: OAuthProvider<Env> | undefined;
+
+function getProvider(env: Env): OAuthProvider<Env> {
+  provider ??= new OAuthProvider<Env>({
+    apiRoute: "/mcp",
+    apiHandler: {
+      fetch(request: Request, env: Env, ctx: ExecutionContext<Props>) {
+        return handleMcpRequest(request, env, ctx.props);
+      },
+    } as never,
+    defaultHandler: defaultHandler as ExportedHandler<Env>,
+    // Paths as before the 1.x upgrade: registered clients and their metadata point at them.
+    authorizeEndpoint: "/authorize",
+    tokenEndpoint: "/token",
+    clientRegistrationEndpoint: "/register",
+    // Claude uses Client ID Metadata Documents when offered and falls back to dynamic registration.
+    clientIdMetadataDocumentEnabled: true,
+    // Must equal the resource existing grants carry (checked 2026-10-12: all ".../mcp"), or every
+    // session breaks on the upgrade from 0.x.
+    resourceMetadata: {
+      resource: new URL("/mcp", env.PUBLIC_URL).toString(),
+      authorization_servers: [new URL(env.PUBLIC_URL).origin],
+      resource_name: "Productive",
+    },
+    // Short-lived: every refresh re-checks USER_MAPPING and Cloudflare Access (recheckOnRefresh),
+    // so 15 minutes is the longest anyone keeps access after being removed.
+    accessTokenTTL: 15 * 60,
+    // Grants stay alive while used; an idle month means signing in again.
+    refreshTokenIdleTTL: 30 * DAY,
+    refreshTokenTTL: 180 * DAY,
+    // Only Claude's callbacks and loopback clients may register (see clients.ts).
+    clientRegistrationCallback: ({ clientMetadata }) =>
+      allowedRegistration(clientMetadata)
+        ? undefined
+        : { code: "invalid_redirect_uri", description: "Only Claude and local MCP clients may register with this server." },
+    tokenExchangeCallback: recheckOnRefresh,
+  });
+  return provider;
+}
+
+export default {
+  fetch(request, env, ctx) {
+    return getProvider(env).fetch(request, env, ctx);
+  },
+
+  // Daily sweep of expired OAuth records, resuming where the previous run stopped.
+  async scheduled(_controller, env) {
+    const cursor = (await env.OAUTH_KV.get("purge-cursor")) ?? undefined;
+    const result = await getProvider(env).purgeExpiredData(env, { batchSize: 100, cursor });
+    if (result.cursor) await env.OAUTH_KV.put("purge-cursor", result.cursor);
+    else await env.OAUTH_KV.delete("purge-cursor");
+  },
+} satisfies ExportedHandler<Env>;
