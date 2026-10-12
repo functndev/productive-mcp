@@ -3,8 +3,8 @@ import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveIncludedResource, ProductiveAttachment } from '../api/types.js';
 import { formatAttachmentList } from './attachments.js';
+import { READ, WRITE, result, runSteps, type RegisterTools, type Step, type TextResult } from './context.js';
 
-type ToolResult = { content: Array<{ type: string; text: string }> };
 
 function resolvePersonName(personId: string | undefined, included?: ProductiveIncludedResource[]): string | undefined {
   if (!personId || !included) return undefined;
@@ -38,15 +38,15 @@ function truncateBody(body: string, maxLength = 200): string {
 
 // ---- Add Task Comment ----
 
-const addTaskCommentSchema = z.object({
+export const addTaskCommentSchema = z.object({
   task_id: z.string().min(1, 'Task ID is required'),
-  comment: z.string().min(1, 'Comment text is required'),
+  comment: z.string().min(1, 'Comment text is required').describe('HTML allowed: <div>, <p>, <strong>, <em>, <ul>, <li>, <a href="">'),
 });
 
 export async function addTaskCommentTool(
   client: ProductiveAPIClient,
   args: unknown
-): Promise<ToolResult> {
+): Promise<TextResult> {
   try {
     const params = addTaskCommentSchema.parse(args);
 
@@ -98,37 +98,18 @@ export async function addTaskCommentTool(
   }
 }
 
-export const addTaskCommentDefinition = {
-  name: 'add_task_comment',
-  description: 'Add a comment to a task. Supports HTML formatting.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'ID of the task to add the comment to',
-      },
-      comment: {
-        type: 'string',
-        description: 'Comment content. Supports HTML formatting with tags like <div>, <p>, <strong>, <em>, <ul>, <li>, <a href="">.',
-      },
-    },
-    required: ['task_id', 'comment'],
-  },
-};
-
 // ---- List Comments ----
 
-const listCommentsSchema = z.object({
-  task_id: z.string().optional(),
-  project_id: z.string().optional(),
-  limit: z.number().optional(),
+export const listCommentsSchema = z.object({
+  task_id: z.string().optional().describe('Only comments on this task'),
+  project_id: z.string().optional().describe('Only comments in this project'),
+  limit: z.number().int().min(1).optional().describe('Max comments'),
 });
 
 export async function listCommentsTool(
   client: ProductiveAPIClient,
   args: unknown
-): Promise<ToolResult> {
+): Promise<TextResult> {
   try {
     const params = listCommentsSchema.parse(args);
 
@@ -176,38 +157,16 @@ export async function listCommentsTool(
   }
 }
 
-export const listCommentsDefinition = {
-  name: 'list_comments',
-  description: 'List comments, optionally filtered by task or project.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'Filter comments by task ID',
-      },
-      project_id: {
-        type: 'string',
-        description: 'Filter comments by project ID',
-      },
-      limit: {
-        type: 'number',
-        description: 'Maximum number of comments to return',
-      },
-    },
-  },
-};
-
 // ---- Get Comment ----
 
-const getCommentSchema = z.object({
+export const getCommentSchema = z.object({
   comment_id: z.string().min(1, 'Comment ID is required'),
 });
 
 export async function getCommentTool(
   client: ProductiveAPIClient,
   args: unknown
-): Promise<ToolResult> {
+): Promise<TextResult> {
   try {
     const params = getCommentSchema.parse(args);
 
@@ -257,34 +216,19 @@ export async function getCommentTool(
   }
 }
 
-export const getCommentDefinition = {
-  name: 'get_comment',
-  description: 'Get a single comment by ID with all attributes.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      comment_id: {
-        type: 'string',
-        description: 'The ID of the comment to retrieve',
-      },
-    },
-    required: ['comment_id'],
-  },
-};
-
 // ---- Update Comment ----
 
-const updateCommentSchema = z.object({
+const updateCommentBodySchema = z.object({
   comment_id: z.string().min(1, 'Comment ID is required'),
   body: z.string().min(1, 'Comment body is required'),
 });
 
-export async function updateCommentTool(
+async function updateCommentBodyTool(
   client: ProductiveAPIClient,
   args: unknown
-): Promise<ToolResult> {
+): Promise<TextResult> {
   try {
-    const params = updateCommentSchema.parse(args);
+    const params = updateCommentBodySchema.parse(args);
 
     const response = await client.updateComment(params.comment_id, {
       data: {
@@ -317,25 +261,6 @@ export async function updateCommentTool(
   }
 }
 
-export const updateCommentDefinition = {
-  name: 'update_comment',
-  description: 'Update the body of an existing comment.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      comment_id: {
-        type: 'string',
-        description: 'The ID of the comment to update',
-      },
-      body: {
-        type: 'string',
-        description: 'The new comment body content. Supports HTML formatting.',
-      },
-    },
-    required: ['comment_id', 'body'],
-  },
-};
-
 // ---- Delete Comment ----
 
 const deleteCommentSchema = z.object({
@@ -345,7 +270,7 @@ const deleteCommentSchema = z.object({
 export async function deleteCommentTool(
   client: ProductiveAPIClient,
   args: unknown
-): Promise<ToolResult> {
+): Promise<TextResult> {
   try {
     const params = deleteCommentSchema.parse(args);
 
@@ -372,31 +297,16 @@ export async function deleteCommentTool(
   }
 }
 
-export const deleteCommentDefinition = {
-  name: 'delete_comment',
-  description: 'Delete a comment by ID.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      comment_id: {
-        type: 'string',
-        description: 'The ID of the comment to delete',
-      },
-    },
-    required: ['comment_id'],
-  },
-};
-
 // ---- Pin Comment ----
 
 const pinCommentSchema = z.object({
   comment_id: z.string().min(1, 'Comment ID is required'),
 });
 
-export async function pinCommentTool(
+async function pinCommentTool(
   client: ProductiveAPIClient,
   args: unknown
-): Promise<ToolResult> {
+): Promise<TextResult> {
   try {
     const params = pinCommentSchema.parse(args);
 
@@ -423,31 +333,16 @@ export async function pinCommentTool(
   }
 }
 
-export const pinCommentDefinition = {
-  name: 'pin_comment',
-  description: 'Pin a comment so it appears prominently.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      comment_id: {
-        type: 'string',
-        description: 'The ID of the comment to pin',
-      },
-    },
-    required: ['comment_id'],
-  },
-};
-
 // ---- Unpin Comment ----
 
 const unpinCommentSchema = z.object({
   comment_id: z.string().min(1, 'Comment ID is required'),
 });
 
-export async function unpinCommentTool(
+async function unpinCommentTool(
   client: ProductiveAPIClient,
   args: unknown
-): Promise<ToolResult> {
+): Promise<TextResult> {
   try {
     const params = unpinCommentSchema.parse(args);
 
@@ -474,32 +369,17 @@ export async function unpinCommentTool(
   }
 }
 
-export const unpinCommentDefinition = {
-  name: 'unpin_comment',
-  description: 'Unpin a previously pinned comment.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      comment_id: {
-        type: 'string',
-        description: 'The ID of the comment to unpin',
-      },
-    },
-    required: ['comment_id'],
-  },
-};
-
 // ---- Add Comment Reaction ----
 
-const addCommentReactionSchema = z.object({
+export const addCommentReactionSchema = z.object({
   comment_id: z.string().min(1, 'Comment ID is required'),
-  reaction: z.string().min(1, 'Reaction is required'),
+  reaction: z.string().min(1, 'Reaction is required').describe('e.g. "like", "heart", "thumbsup"'),
 });
 
 export async function addCommentReactionTool(
   client: ProductiveAPIClient,
   args: unknown
-): Promise<ToolResult> {
+): Promise<TextResult> {
   try {
     const params = addCommentReactionSchema.parse(args);
 
@@ -526,21 +406,77 @@ export async function addCommentReactionTool(
   }
 }
 
-export const addCommentReactionDefinition = {
-  name: 'add_comment_reaction',
-  description: 'Add a reaction (e.g. "like") to a comment.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      comment_id: {
-        type: 'string',
-        description: 'The ID of the comment to react to',
-      },
-      reaction: {
-        type: 'string',
-        description: 'The reaction to add (e.g. "like", "heart", "thumbsup")',
-      },
+// ---- Update Comment (body and/or pin state) ----
+
+export const updateCommentSchema = z.object({
+  comment_id: z.string().min(1, 'Comment ID is required'),
+  body: z.string().min(1, 'Comment body cannot be empty').optional().describe('New body (replaces the old one); HTML allowed'),
+  pinned: z.boolean().optional().describe('true pins the comment, false unpins it'),
+});
+
+/** One tool for every change to a comment: the body first, then the pin state. */
+async function updateCommentTool(client: ProductiveAPIClient, args: z.infer<typeof updateCommentSchema>): Promise<TextResult> {
+  const { comment_id } = args;
+  const steps: Step[] = [];
+
+  if (args.body !== undefined) {
+    steps.push(['body', () => updateCommentBodyTool(client, { comment_id, body: args.body })]);
+  }
+  if (args.pinned !== undefined) {
+    steps.push([args.pinned ? 'pin' : 'unpin', () => (args.pinned ? pinCommentTool : unpinCommentTool)(client, { comment_id })]);
+  }
+  return runSteps(steps, 'Nothing to update: pass body and/or pinned');
+}
+
+export const registerCommentTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_comments',
+    {
+      title: 'List comments',
+      description: 'List comments with their attachments, optionally of one task or project.',
+      inputSchema: listCommentsSchema,
+      annotations: READ,
     },
-    required: ['comment_id', 'reaction'],
-  },
+    (args) => result(listCommentsTool(client, args))
+  );
+  server.registerTool(
+    'get_comment',
+    {
+      title: 'Get comment',
+      description: 'Get a comment with its full body, creator, pin state, reactions and attachments.',
+      inputSchema: getCommentSchema,
+      annotations: READ,
+    },
+    (args) => result(getCommentTool(client, args))
+  );
+  server.registerTool(
+    'add_task_comment',
+    {
+      title: 'Add task comment',
+      description: 'Add a comment to a task. HTML formatting is supported.',
+      inputSchema: addTaskCommentSchema,
+      annotations: WRITE,
+    },
+    (args) => result(addTaskCommentTool(client, args))
+  );
+  server.registerTool(
+    'update_comment',
+    {
+      title: 'Update comment',
+      description: 'Change a comment\'s body and/or pin or unpin it. Pass only the fields to change.',
+      inputSchema: updateCommentSchema,
+      annotations: WRITE,
+    },
+    (args) => result(updateCommentTool(client, args))
+  );
+  server.registerTool(
+    'add_comment_reaction',
+    {
+      title: 'Add comment reaction',
+      description: 'Add a reaction (e.g. "like") to a comment.',
+      inputSchema: addCommentReactionSchema,
+      annotations: WRITE,
+    },
+    (args) => result(addCommentReactionTool(client, args))
+  );
 };

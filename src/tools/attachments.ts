@@ -3,6 +3,7 @@ import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveAttachment } from '../api/types.js';
 import type { AttachmentLinkSigner } from '../attachment-links.js';
+import { READ, result, type RegisterTools } from './context.js';
 
 /**
  * Tool results may carry binary payloads, so they are not limited to the
@@ -89,14 +90,14 @@ export function formatAttachmentList(attachments: ProductiveAttachment[]): strin
   return attachments.map(describeAttachment).join('\n\n');
 }
 
-const listAttachmentsSchema = z
+export const listAttachmentsSchema = z
   .object({
-    task_id: z.string().optional(),
-    comment_id: z.string().optional(),
-    page_id: z.string().optional(),
-    project_id: z.string().optional(),
-    limit: z.number().min(1).max(200).default(50).optional(),
-    page: z.number().min(1).default(1).optional(),
+    task_id: z.string().optional().describe('Attachments of this task, including images embedded in its description'),
+    comment_id: z.string().optional().describe('Attachments of this comment'),
+    page_id: z.string().optional().describe('Attachments of this page'),
+    project_id: z.string().optional().describe('All attachments in this project'),
+    limit: z.number().min(1).max(200).default(50).optional().describe('Attachments to return (1-200, default 50)'),
+    page: z.number().min(1).default(1).optional().describe('Page number (default 1)'),
   })
   .refine(
     params =>
@@ -163,50 +164,14 @@ export async function listAttachmentsTool(
   }
 }
 
-export const listAttachmentsDefinition = {
-  name: 'list_attachments',
-  description:
-    'List the files attached to a task, comment, page or project (screenshots, PDFs, logs). Returns each attachment ID, filename, MIME type and size. Use get_attachment to actually read an attachment. Note that images embedded in a task description are attachments too, so a ticket whose description contains a screenshot will list it here.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'List attachments of this task (including images embedded in its description)',
-      },
-      comment_id: {
-        type: 'string',
-        description: 'List attachments of this comment',
-      },
-      page_id: {
-        type: 'string',
-        description: 'List attachments of this page',
-      },
-      project_id: {
-        type: 'string',
-        description: 'List all attachments in this project',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of attachments to return (1-200, default: 50)',
-        minimum: 1,
-        maximum: 200,
-        default: 50,
-      },
-      page: {
-        type: 'number',
-        description: 'Page number for pagination (default: 1)',
-        minimum: 1,
-        default: 1,
-      },
-    },
-  },
-};
-
-const getAttachmentSchema = z.object({
-  attachment_id: z.string().min(1, 'Attachment ID is required'),
-  thumbnail: z.boolean().default(false).optional(),
-  raw: z.boolean().default(false).optional(),
+export const getAttachmentSchema = z.object({
+  attachment_id: z.string().min(1, 'Attachment ID is required').describe('The attachment ID'),
+  thumbnail: z.boolean().default(false).optional()
+    .describe('For images: return the smaller resized preview instead of the original (default false)'),
+  raw: z.boolean().default(false).optional().describe(
+    'For files other than images and text: return the file itself (embedded resource, max 5 MB) instead of a download link. ' +
+    'Only for clients without a shell that can open embedded files; the claude.ai connector in Claude Code cannot (default false)'
+  ),
 });
 
 export async function getAttachmentTool(
@@ -352,30 +317,29 @@ export async function getAttachmentTool(
   }
 }
 
-export const getAttachmentDefinition = {
-  name: 'get_attachment',
-  description:
-    'Download an attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and anything else (PDFs, Office documents, ...) as a signed download link valid for 15 minutes: save it with curl and open the file from disk. Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      attachment_id: {
-        type: 'string',
-        description: 'The ID of the attachment to download',
-      },
-      thumbnail: {
-        type: 'boolean',
-        description:
-          'For images, return the smaller resized preview instead of the original. Useful for very large screenshots (default: false)',
-        default: false,
-      },
-      raw: {
-        type: 'boolean',
-        description:
-          'For files other than images and text, return the file itself (embedded resource, max 5 MB) instead of a download link. Only for clients without a shell that can open embedded files; the claude.ai connector in Claude Code cannot (default: false)',
-        default: false,
-      },
+export const registerAttachmentTools: RegisterTools = (server, { client, attachmentLinks }) => {
+  server.registerTool(
+    'list_attachments',
+    {
+      title: 'List attachments',
+      description:
+        'List the files attached to a task, comment, page or project (screenshots, PDFs, logs) with ID, name, type and size; ' +
+        'images embedded in a task description count too. Read one with get_attachment.',
+      inputSchema: listAttachmentsSchema,
+      annotations: READ,
     },
-    required: ['attachment_id'],
-  },
+    (args) => result(listAttachmentsTool(client, args))
+  );
+  server.registerTool(
+    'get_attachment',
+    {
+      title: 'Get attachment',
+      description:
+        'Read an attachment by ID: images come back as images, text files as text, anything else (PDFs, Office files, ...) ' +
+        'as a download link valid for 15 minutes to save with curl and open from disk. IDs come from list_attachments or get_task.',
+      inputSchema: getAttachmentSchema,
+      annotations: READ,
+    },
+    (args) => result(getAttachmentTool(client, attachmentLinks, args))
+  );
 };

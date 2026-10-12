@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveTimeEntryCreate } from '../api/types.js';
+import { READ, WRITE, result, type RegisterTools } from './context.js';
 
 // Helper function to parse time input into minutes
 function parseTimeToMinutes(timeInput: string): number {
@@ -61,36 +62,33 @@ function parseDate(dateInput: string): string {
   throw new Error(`Invalid date format: ${dateInput}. Use "today", "yesterday", or YYYY-MM-DD format`);
 }
 
-const listTimeEntriesSchema = z.object({
-  date: z.string().optional(),
-  after: z.string().optional(),
-  before: z.string().optional(),
-  person_id: z.string().optional(),
-  project_id: z.string().optional(),
-  task_id: z.string().optional(),
-  service_id: z.string().optional(),
-  limit: z.number().min(1).max(200).default(30).optional(),
+export const listTimeEntriesSchema = z.object({
+  date: z.string().optional().describe('Only this date, YYYY-MM-DD'),
+  after: z.string().optional().describe('Only entries after this date, YYYY-MM-DD'),
+  before: z.string().optional().describe('Only entries before this date, YYYY-MM-DD'),
+  person_id: z.string().optional().describe('Only entries of this person; "me" for you'),
+  project_id: z.string().optional().describe('Only entries on this project'),
+  task_id: z.string().optional().describe('Only entries on this task'),
+  service_id: z.string().optional().describe('Only entries on this service'),
+  limit: z.number().min(1).max(200).default(30).optional().describe('Entries to return (1-200, default 30)'),
 });
 
-const createTimeEntrySchema = z.object({
-  date: z.string().min(1, 'Date is required'),
-  time: z.string().min(1, 'Time is required'),
-  person_id: z.string().min(1, 'Person ID is required'),
-  service_id: z.string().min(1, 'Service ID is required'),
-  task_id: z.string().optional().describe('Optional task ID - use list_project_tasks to find available tasks for the project'),
-  note: z.string().min(10, 'Work description must be at least 10 characters').describe('Detailed description of work performed - be specific about what was accomplished, including bullet points if multiple items'),
-  billable_time: z.string().optional(),
-  confirm: z.boolean().optional().default(false),
+export const createTimeEntrySchema = z.object({
+  date: z.string().min(1, 'Date is required').describe('"today", "yesterday" or YYYY-MM-DD'),
+  time: z.string().min(1, 'Time is required').describe('Duration like "2h", "120m", "2.5h" or "2.5" (hours)'),
+  person_id: z.string().min(1, 'Person ID is required').describe('Person logging the time; "me" for you'),
+  service_id: z.string().min(1, 'Service ID is required').describe('Service the time is booked on (from list_services with deal_id)'),
+  task_id: z.string().optional().describe('Task worked on (recommended; find it with list_tasks and project_id)'),
+  note: z.string().min(10, 'Work description must be at least 10 characters')
+    .describe('What was done, specifically (bullet points for several items; at least 10 characters)'),
+  billable_time: z.string().optional().describe('Billable duration, same format as time; defaults to time'),
+  confirm: z.boolean().optional().default(false).describe('true creates the entry; call without it first to preview'),
 });
 
-const listServicesSchema = z.object({
-  company_id: z.string().optional(),
-  limit: z.number().min(1).max(200).default(30).optional(),
-});
-
-const getProjectServicesSchema = z.object({
-  project_id: z.string().min(1, 'Project ID is required'),
-  limit: z.number().min(1).max(200).default(30).optional(),
+export const listServicesSchema = z.object({
+  deal_id: z.string().optional().describe('Only services of this deal/budget (from list_project_deals); use this to find the service_id for create_time_entry'),
+  company_id: z.string().optional().describe('Only services of this company'),
+  limit: z.number().min(1).max(200).default(30).optional().describe('Services to return (1-200, default 30)'),
 });
 
 export async function listTimeEntresTool(
@@ -384,36 +382,44 @@ ID: ${response.data.id}`;
   }
 }
 
+/** Lists services, optionally only those of one deal/budget (the timesheet flow) or one company. */
 export async function listServicesTool(
   client: ProductiveAPIClient,
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
     const params = listServicesSchema.parse(args);
-    
-    const response = await client.listServices({
-      company_id: params.company_id,
-      limit: params.limit,
-    });
-    
+
+    if (params.deal_id && params.company_id) {
+      throw new McpError(ErrorCode.InvalidParams, 'Pass either deal_id or company_id, not both');
+    }
+
+    const response = params.deal_id
+      ? await client.listDealServices({ deal_id: params.deal_id, limit: params.limit })
+      : await client.listServices({ company_id: params.company_id, limit: params.limit });
+
     if (!response.data || response.data.length === 0) {
       return {
         content: [{
           type: 'text',
-          text: 'No services found matching the criteria.',
+          text: params.deal_id ? 'No services found for this deal/budget.' : 'No services found matching the criteria.',
         }],
       };
     }
-    
+
     const servicesText = response.data.map(service => {
       const companyId = service.relationships?.company?.data?.id;
-      return `• ${service.attributes.name} (ID: ${service.id})
+      return `• ${service.attributes.name || 'Unnamed Service'} (ID: ${service.id})
   ${companyId ? `Company ID: ${companyId}` : ''}
   ${service.attributes.description ? `Description: ${service.attributes.description}` : 'No description'}`;
     }).join('\n\n');
-    
-    const summary = `Found ${response.data.length} service${response.data.length !== 1 ? 's' : ''}${response.meta?.total_count ? ` (showing ${response.data.length} of ${response.meta.total_count})` : ''}:\n\n${servicesText}`;
-    
+
+    const count = `${response.data.length} service${response.data.length !== 1 ? 's' : ''}`;
+    const shown = response.meta?.total_count ? ` (showing ${response.data.length} of ${response.meta.total_count})` : '';
+    const summary = params.deal_id
+      ? `Found ${count} for deal/budget ${params.deal_id}${shown}:\n\n${servicesText}`
+      : `Found ${count}${shown}:\n\n${servicesText}`;
+
     return {
       content: [{
         type: 'text',
@@ -421,197 +427,26 @@ export async function listServicesTool(
       }],
     };
   } catch (error) {
+    if (error instanceof McpError) throw error;
     if (error instanceof z.ZodError) {
       throw new McpError(
         ErrorCode.InvalidParams,
         `Invalid parameters: ${error.issues.map((e: z.ZodIssue) => e.message).join(', ')}`
       );
     }
-    
+
     throw new McpError(
       ErrorCode.InternalError,
       error instanceof Error ? error.message : 'Unknown error occurred'
     );
   }
 }
-
-export async function getProjectServicesTool(
-  client: ProductiveAPIClient,
-  args: unknown
-): Promise<{ content: Array<{ type: string; text: string }> }> {
-  try {
-    const params = getProjectServicesSchema.parse(args);
-    
-    // First get the project to verify it exists and get company info
-    const projectResponse = await client.listProjects({
-      limit: 1,
-    });
-    
-    // Then get services for the project's company
-    // Note: This is a simplified approach - in practice you might need
-    // to get the project details first to find its company
-    const response = await client.listServices({
-      limit: params.limit,
-    });
-    
-    if (!response.data || response.data.length === 0) {
-      return {
-        content: [{
-          type: 'text',
-          text: `No active services found for project ${params.project_id}.`,
-        }],
-      };
-    }
-    
-    const servicesText = response.data.map(service => {
-      const companyId = service.relationships?.company?.data?.id;
-      
-      return `• ${service.attributes.name} (ID: ${service.id})
-  ${companyId ? `Company ID: ${companyId}` : ''}
-  ${service.attributes.description ? `Description: ${service.attributes.description}` : 'No description'}`;
-    }).join('\n\n');
-    
-    const summary = `Services available for project ${params.project_id} (${response.data.length} service${response.data.length !== 1 ? 's' : ''}):\n\n${servicesText}`;
-    
-    return {
-      content: [{
-        type: 'text',
-        text: summary,
-      }],
-    };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      throw new McpError(
-        ErrorCode.InvalidParams,
-        `Invalid parameters: ${error.issues.map((e: z.ZodIssue) => e.message).join(', ')}`
-      );
-    }
-    
-    throw new McpError(
-      ErrorCode.InternalError,
-      error instanceof Error ? error.message : 'Unknown error occurred'
-    );
-  }
-}
-
-export const listTimeEntriesDefinition = {
-  name: 'list_time_entries',
-  description: 'View existing time entries with detailed information including service and budget relationships.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      date: {
-        type: 'string',
-        description: 'Filter by specific date (YYYY-MM-DD format)',
-      },
-      after: {
-        type: 'string',
-        description: 'Filter entries after this date (YYYY-MM-DD format)',
-      },
-      before: {
-        type: 'string',
-        description: 'Filter entries before this date (YYYY-MM-DD format)',
-      },
-      person_id: {
-        type: 'string',
-        description: 'Filter by person ID. "me" for the current user.',
-      },
-      project_id: {
-        type: 'string',
-        description: 'Filter by project ID',
-      },
-      task_id: {
-        type: 'string',
-        description: 'Filter by task ID',
-      },
-      service_id: {
-        type: 'string',
-        description: 'Filter by service ID',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of time entries to return (1-200)',
-        minimum: 1,
-        maximum: 200,
-        default: 30,
-      },
-    },
-    required: [],
-  },
-};
-
-export const createTimeEntryDefinition = {
-  name: 'create_time_entry',
-  description: 'Log time. Find service_id via list_projects → list_project_deals → list_deal_services; optionally link a task (get_project_tasks). Call without confirm first to preview.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      date: {
-        type: 'string',
-        description: 'Date for the time entry. Accepts "today", "yesterday", or YYYY-MM-DD format',
-      },
-      time: {
-        type: 'string',
-        description: 'Time duration. Accepts formats like "2h", "120m", "2.5h", or "2.5" (assumed hours)',
-      },
-      person_id: {
-        type: 'string',
-        description: 'ID of the person logging time. "me" for the current user.',
-      },
-      service_id: {
-        type: 'string',
-        description: 'ID of the service being performed',
-      },
-      task_id: {
-        type: 'string',
-        description: 'ID of the task being worked on (recommended; see get_project_tasks)',
-      },
-      note: {
-        type: 'string',
-        description: 'Detailed description of work performed - be specific about what was accomplished, include bullet points if multiple items (minimum 10 characters)',
-        minLength: 10,
-      },
-      billable_time: {
-        type: 'string',
-        description: 'Billable time duration, same format as time field. If not specified, defaults to the time value',
-      },
-      confirm: {
-        type: 'boolean',
-        description: 'Set to true to confirm and create the time entry. First call without this to see confirmation details.',
-        default: false,
-      },
-    },
-    required: ['date', 'time', 'person_id', 'service_id', 'note'],
-  },
-};
-
-export const listServicesDefinition = {
-  name: 'list_services',
-  description: 'List all services in the organization. NOTE: For timesheet entries, use the proper workflow instead: list_projects → list_project_deals → list_deal_services → create_time_entry. This tool shows all services but does not indicate which project/budget they belong to.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      company_id: {
-        type: 'string',
-        description: 'Filter services by company ID',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of services to return (1-200)',
-        minimum: 1,
-        maximum: 200,
-        default: 30,
-      },
-    },
-    required: [],
-  },
-};
 
 // Zod schema for list project deals/budgets
-const listProjectDealsSchema = z.object({
-  project_id: z.string().min(1, 'Project ID is required'),
-  budget_type: z.number().int().min(1).max(2).optional().describe('Budget type: 1 = deal, 2 = budget'),
-  limit: z.number().min(1).max(200).default(30).optional(),
+export const listProjectDealsSchema = z.object({
+  project_id: z.string().min(1, 'Project ID is required').describe('The project ID'),
+  budget_type: z.number().int().min(1).max(2).optional().describe('Only 1 = deals or 2 = budgets'),
+  limit: z.number().min(1).max(200).default(30).optional().describe('Deals/budgets to return (1-200, default 30)'),
 });
 
 // Tool function for list project deals/budgets
@@ -672,131 +507,49 @@ export async function listProjectDealsTool(
   }
 }
 
-// Zod schema for list deal services
-const listDealServicesSchema = z.object({
-  deal_id: z.string().min(1, 'Deal/Budget ID is required'),
-  limit: z.number().min(1).max(200).default(30).optional(),
-});
-
-// Tool function for list deal services
-export async function listDealServicesTool(
-  client: ProductiveAPIClient,
-  args: unknown
-): Promise<{ content: Array<{ type: string; text: string }> }> {
-  try {
-    const params = listDealServicesSchema.parse(args);
-    
-    const response = await client.listDealServices({
-      deal_id: params.deal_id,
-      limit: params.limit,
-    });
-    
-    if (!response.data || response.data.length === 0) {
-      return {
-        content: [{
-          type: 'text',
-          text: 'No services found for this deal/budget.',
-        }],
-      };
-    }
-    
-    const servicesText = response.data.map(service => {
-      return `• Service (ID: ${service.id})
-  Name: ${service.attributes.name || 'Unnamed Service'}
-  ${service.attributes.description ? `Description: ${service.attributes.description}` : 'No description'}`;
-    }).join('\n\n');
-    
-    const summary = `Found ${response.data.length} service${response.data.length !== 1 ? 's' : ''} for deal/budget ${params.deal_id}:\n\n${servicesText}`;
-    
-    return {
-      content: [{
-        type: 'text',
-        text: summary,
-      }],
-    };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      throw new McpError(
-        ErrorCode.InvalidParams,
-        `Invalid parameters: ${error.issues.map((e: z.ZodIssue) => e.message).join(', ')}`
-      );
-    }
-    
-    throw new McpError(
-      ErrorCode.InternalError,
-      error instanceof Error ? error.message : 'Unknown error occurred'
-    );
-  }
-}
-
-export const listProjectDealsDefinition = {
-  name: 'list_project_deals',
-  description: 'STEP 2 of timesheet workflow: Get deals/budgets for a specific project. COMPLETE WORKFLOW: 1) list_projects → 2) list_project_deals → 3) list_deal_services → 4) list_project_tasks (recommended) → 5) create_time_entry. This follows: Project → Deal/Budget → Service → Task → Time Entry.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'The ID of the project',
-      },
-      budget_type: {
-        type: 'number',
-        description: 'Filter by budget type: 1 = deal, 2 = budget',
-        minimum: 1,
-        maximum: 2,
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of deals/budgets to return (1-200)',
-        minimum: 1,
-        maximum: 200,
-        default: 30,
-      },
+export const registerTimeTools: RegisterTools = (server, { client, config }) => {
+  server.registerTool(
+    'list_time_entries',
+    {
+      title: 'List time entries',
+      description: 'List logged time entries with date, duration, note, person, service, task and project, plus the total.',
+      inputSchema: listTimeEntriesSchema,
+      annotations: READ,
     },
-    required: ['project_id'],
-  },
-};
-
-export const listDealServicesDefinition = {
-  name: 'list_deal_services',
-  description: 'STEP 3 of timesheet workflow: Get services for a specific deal/budget. COMPLETE WORKFLOW: 1) list_projects → 2) list_project_deals → 3) list_deal_services → 4) list_project_tasks (recommended) → 5) create_time_entry. After this, optionally use list_project_tasks to find specific tasks to link your time entry to.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      deal_id: {
-        type: 'string',
-        description: 'The ID of the deal/budget',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of services to return (1-200)',
-        minimum: 1,
-        maximum: 200,
-        default: 30,
-      },
+    (args) => result(listTimeEntresTool(client, args, config))
+  );
+  server.registerTool(
+    'create_time_entry',
+    {
+      title: 'Create time entry',
+      description:
+        'Log time on a service. Find service_id via list_projects → list_project_deals → list_services with deal_id; optionally link a task (list_tasks with project_id). ' +
+        'Call without confirm first to preview, then again with confirm: true.',
+      inputSchema: createTimeEntrySchema,
+      annotations: WRITE,
     },
-    required: ['deal_id'],
-  },
-};
-
-export const getProjectServicesDefinition = {
-  name: 'get_project_services',
-  description: 'DEPRECATED: Use the proper workflow instead: list_projects → list_project_deals → list_deal_services → create_time_entry. This tool does not properly handle the project → deal/budget → service hierarchy required for timesheet entries.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'The ID of the project',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of services to return (1-200)',
-        minimum: 1,
-        maximum: 200,
-        default: 30,
-      },
+    (args) => result(createTimeEntryTool(client, args, config))
+  );
+  server.registerTool(
+    'list_project_deals',
+    {
+      title: 'List project deals',
+      description: 'List the deals/budgets of a project. For logging time: list_projects → list_project_deals → list_services with deal_id → create_time_entry.',
+      inputSchema: listProjectDealsSchema,
+      annotations: READ,
     },
-    required: ['project_id'],
-  },
+    (args) => result(listProjectDealsTool(client, args))
+  );
+  server.registerTool(
+    'list_services',
+    {
+      title: 'List services',
+      description:
+        'List services, the budget lines time is logged on. Pass deal_id (from list_project_deals) to get the services a time entry can use; ' +
+        'without it, all services of the organisation are listed, with no link to a project.',
+      inputSchema: listServicesSchema,
+      annotations: READ,
+    },
+    (args) => result(listServicesTool(client, args))
+  );
 };

@@ -205,25 +205,3 @@ export async function updateTaskStatusTool(
   }
 }
 
-export const updateTaskStatusDefinition = {
-  name: 'update_task_status',
-  description: 'Update the status of a task. You can provide a status_name (e.g. "In Progress", "Done", "QA Review") and it will automatically resolve to the correct workflow status for that task. Supports custom workflow statuses. Falls back to workflow_status_id if provided directly.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'ID of the task to update',
-      },
-      status_name: {
-        type: 'string',
-        description: 'Name of the status to set (e.g. "In Progress", "Done", "To Do"). Case-insensitive, supports partial matching. If ambiguous, returns available options.',
-      },
-      workflow_status_id: {
-        type: 'string',
-        description: 'Exact workflow status ID (optional — use status_name instead for convenience)',
-      },
-    },
-    required: ['task_id'],
-  },
-};

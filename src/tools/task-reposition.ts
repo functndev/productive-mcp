@@ -119,37 +119,6 @@ export const repositionTask = async (
   return await apiClient.repositionTask(taskId, {});
 };
 
-export const taskRepositionDefinition = {
-  name: 'reposition_task',
-  description: 'Reposition a task in a task list',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      taskId: {
-        type: 'string',
-        description: 'The ID of the task to reposition'
-      },
-      move_before_id: {
-        type: 'string',
-        description: 'Position the task before this task ID'
-      },
-      move_after_id: {
-        type: 'string',
-        description: 'Position the task after this task ID'
-      },
-      moveToTop: {
-        type: 'boolean',
-        description: 'Move the task to the top of its list'
-      },
-      moveToBottom: {
-        type: 'boolean',
-        description: 'Move the task to the bottom of its list'
-      }
-    },
-    required: ['taskId']
-  }
-};
-
 export const taskRepositionTool = async (apiClient: ProductiveAPIClient, args: z.infer<typeof taskRepositionSchema>) => {
   try {
     const result = await repositionTask(apiClient, args);
@@ -197,11 +166,4 @@ Position updated according to the requested parameters.`,
       }],
     };
   }
-};
-
-export default {
-  name: 'reposition_task',
-  description: 'Reposition a task in a task list',
-  inputSchema: taskRepositionDefinition.inputSchema,
-  execute: repositionTask,
 };

@@ -7,7 +7,7 @@
   "name": "productive-mcp",
   "main": "src/index.ts",
   "workers_dev": false,
-  "compatibility_date": "2025-03-10",
+  "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "migrations": [
     {
