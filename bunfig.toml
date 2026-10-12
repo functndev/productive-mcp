@@ -1,0 +1,3 @@
+[test]
+# Stubs the Workers runtime module the OAuth provider imports.
+preload = ["./src/test-setup.ts"]

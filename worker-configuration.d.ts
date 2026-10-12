@@ -4,6 +4,7 @@
 interface __BaseEnv_Env {
 	OAUTH_KV: KVNamespace;
 	PRODUCTIVE_API_BASE_URL: "https://api.productive.io/api/v2/";
+	PUBLIC_URL: "https://productive-mcp.functn.com";
 	PRODUCTIVE_API_TOKEN: string;
 	PRODUCTIVE_ORG_ID: string;
 }
