@@ -1,6 +1,7 @@
-import OAuthProvider from "@cloudflare/workers-oauth-provider";
-import { McpAgent } from "agents/mcp";
-import { handleAccessRequest } from "./access-handler.js";
+import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
+import { createMcpHandler } from "@modelcontextprotocol/server";
+import { handleAccessRequest, recheckOnRefresh } from "./access-handler.js";
+import { allowedRegistration, isAllowedRedirectUri } from "./clients.js";
 import type { Props } from "./workers-oauth-utils.js";
 import { createMcpServer } from "./mcp.js";
 import { parseConfig, type Config } from "./config/index.js";
@@ -10,78 +11,104 @@ import {
   handleAttachmentDownload,
 } from "./attachment-links.js";
 
-export class ProductiveMcp extends McpAgent<Env, unknown, Props> {
-  // Assigned in init(). Typed loosely to accommodate the low-level Server.
-  // biome-ignore lint/suspicious/noExplicitAny: agents SDK accepts Server | McpServer
-  server: any;
+/**
+ * The protected MCP endpoint. Stateless: every request builds a fresh McpServer for the
+ * authenticated user from the grant props, so nothing outlives the request.
+ */
+function handleMcpRequest(request: Request, env: Env, props: Props): Promise<Response> {
+  const config: Config = parseConfig({
+    // Per-user API token resolved from USER_MAPPING by the Access middleware.
+    PRODUCTIVE_API_TOKEN: props.productiveApiToken,
+    PRODUCTIVE_USER_ID: props.productiveUserId,
+    PRODUCTIVE_USER_EMAIL: props.email,
+    PRODUCTIVE_ORG_ID: (env as Env & { PRODUCTIVE_ORG_ID?: string }).PRODUCTIVE_ORG_ID,
+    PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
+    // Admin token resolved from any USER_MAPPING entry flagged isAdmin:true.
+    // Only used by tools that need elevated access (e.g. list_users).
+    PRODUCTIVE_ADMIN_API_TOKEN: props.adminApiToken,
+  });
 
-  async init() {
-    const env = this.env as Env & { PRODUCTIVE_ORG_ID?: string };
-    const config: Config = parseConfig({
-      // Per-user API token resolved from USER_MAPPING by the Access middleware.
-      PRODUCTIVE_API_TOKEN: this.props?.productiveApiToken,
-      PRODUCTIVE_USER_ID: this.props?.productiveUserId,
-      PRODUCTIVE_USER_EMAIL: this.props?.email,
-      PRODUCTIVE_ORG_ID: env.PRODUCTIVE_ORG_ID,
-      PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
-      // Admin token resolved from any USER_MAPPING entry flagged isAdmin:true.
-      // Only used by tools that need elevated access (e.g. list_users).
-      PRODUCTIVE_ADMIN_API_TOKEN: this.props?.adminApiToken,
-    });
+  // The Worker's hostname is not in the config, so use the one the client connected to;
+  // get_attachment builds download links from it.
+  const origin = new URL(request.url).origin;
+  const attachmentLinks = config.PRODUCTIVE_USER_ID
+    ? createAttachmentLinkSigner(origin, env.COOKIE_ENCRYPTION_KEY, config.PRODUCTIVE_USER_ID)
+    : undefined;
 
-    const origin = this.props?.origin;
-    const attachmentLinks =
-      origin && config.PRODUCTIVE_USER_ID
-        ? createAttachmentLinkSigner(origin, env.COOKIE_ENCRYPTION_KEY, config.PRODUCTIVE_USER_ID)
-        : undefined;
-
-    this.server = createMcpServer(config, attachmentLinks);
-  }
-
-  // The agents SDK bridges each POST /mcp to this DO over a WebSocket and
-  // closes it once the response is out, but its webSocketClose never answers
-  // the close frame. The stateless Worker invocation then waits on the
-  // half-closed socket until this DO hibernates; when that takes over 30 s
-  // the runtime cancels it and logs "waitUntil() tasks did not complete".
-  async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
-    try {
-      await super.webSocketClose(ws, code, reason, wasClean);
-    } finally {
-      try {
-        // 1005 and 1006 are reserved and must not be sent in a close frame.
-        ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
-      } catch {
-        // Already closed.
-      }
-    }
-  }
+  return createMcpHandler(() => createMcpServer(config, attachmentLinks)).fetch(request);
 }
 
-const mcpHandler = ProductiveMcp.serve("/mcp");
+const DAY = 24 * 60 * 60;
 
-export default new OAuthProvider({
-  apiHandler: {
-    // The Worker's hostname is not in the config, so pass on the one the
-    // client connected to; get_attachment builds download links from it.
-    fetch(request: Request, env: Env, ctx: ExecutionContext<Props>) {
-      (ctx as { props: Props }).props = {
-        ...ctx.props,
-        origin: new URL(request.url).origin,
-      };
-      return mcpHandler.fetch(request, env, ctx);
-    },
-  } as never,
-  apiRoute: "/mcp",
-  authorizeEndpoint: "/authorize",
-  clientRegistrationEndpoint: "/register",
-  defaultHandler: {
-    fetch(request: Request, env: Env, ctx: ExecutionContext) {
-      // Signed attachment links authenticate themselves, so they bypass OAuth.
-      if (new URL(request.url).pathname.startsWith(ATTACHMENT_PATH_PREFIX)) {
-        return handleAttachmentDownload(request, env);
-      }
-      return handleAccessRequest(request, env as never, ctx);
-    },
+/** Routes outside /mcp: sign-in, consent and signed attachment downloads. */
+const defaultHandler = {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const url = new URL(request.url);
+    // Signed attachment links authenticate themselves, so they bypass OAuth.
+    if (url.pathname.startsWith(ATTACHMENT_PATH_PREFIX)) {
+      return handleAttachmentDownload(request, env);
+    }
+    // Tokens only ever go to Claude or a local client (see clients.ts). Checked here too, not only
+    // at registration, because clients registered before the allowlist are still stored.
+    const redirectUri = url.searchParams.get("redirect_uri");
+    if (url.pathname === "/authorize" && redirectUri && !isAllowedRedirectUri(redirectUri)) {
+      return new Response("This MCP server only signs in Claude and local MCP clients.", { status: 400 });
+    }
+    return handleAccessRequest(request, env as never, ctx);
   },
-  tokenEndpoint: "/token",
-});
+};
+
+// Options depend on env (PUBLIC_URL), so the provider is built on first use per isolate.
+let provider: OAuthProvider<Env> | undefined;
+
+function getProvider(env: Env): OAuthProvider<Env> {
+  provider ??= new OAuthProvider<Env>({
+    apiRoute: "/mcp",
+    apiHandler: {
+      fetch(request: Request, env: Env, ctx: ExecutionContext<Props>) {
+        return handleMcpRequest(request, env, ctx.props);
+      },
+    } as never,
+    defaultHandler: defaultHandler as ExportedHandler<Env>,
+    // Paths as before the 1.x upgrade: registered clients and their metadata point at them.
+    authorizeEndpoint: "/authorize",
+    tokenEndpoint: "/token",
+    clientRegistrationEndpoint: "/register",
+    // Claude uses Client ID Metadata Documents when offered and falls back to dynamic registration.
+    clientIdMetadataDocumentEnabled: true,
+    // Must equal the resource existing grants carry (checked 2026-10-12: all ".../mcp"), or every
+    // session breaks on the upgrade from 0.x.
+    resourceMetadata: {
+      resource: new URL("/mcp", env.PUBLIC_URL).toString(),
+      authorization_servers: [new URL(env.PUBLIC_URL).origin],
+      resource_name: "Productive",
+    },
+    // Short-lived: every refresh re-checks USER_MAPPING and Cloudflare Access (recheckOnRefresh),
+    // so 15 minutes is the longest anyone keeps access after being removed.
+    accessTokenTTL: 15 * 60,
+    // Grants stay alive while used; an idle month means signing in again.
+    refreshTokenIdleTTL: 30 * DAY,
+    refreshTokenTTL: 180 * DAY,
+    // Only Claude's callbacks and loopback clients may register (see clients.ts).
+    clientRegistrationCallback: ({ clientMetadata }) =>
+      allowedRegistration(clientMetadata)
+        ? undefined
+        : { code: "invalid_redirect_uri", description: "Only Claude and local MCP clients may register with this server." },
+    tokenExchangeCallback: recheckOnRefresh,
+  });
+  return provider;
+}
+
+export default {
+  fetch(request, env, ctx) {
+    return getProvider(env).fetch(request, env, ctx);
+  },
+
+  // Daily sweep of expired OAuth records, resuming where the previous run stopped.
+  async scheduled(_controller, env) {
+    const cursor = (await env.OAUTH_KV.get("purge-cursor")) ?? undefined;
+    const result = await getProvider(env).purgeExpiredData(env, { batchSize: 100, cursor });
+    if (result.cursor) await env.OAUTH_KV.put("purge-cursor", result.cursor);
+    else await env.OAUTH_KV.delete("purge-cursor");
+  },
+} satisfies ExportedHandler<Env>;

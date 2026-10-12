@@ -306,6 +306,10 @@ export class ProductiveAPIClient {
     );
   }
 
+  async getPerson(personId: string): Promise<ProductiveSingleResponse<ProductivePerson>> {
+    return this.makeRequest<ProductiveSingleResponse<ProductivePerson>>(`people/${personId}`);
+  }
+
   async listPeople(params?: {
     company_id?: string;
     project_id?: string;

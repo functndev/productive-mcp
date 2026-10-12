@@ -1,13 +1,14 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
+import { READ, WRITE, result, runSteps, type RegisterTools, type Step, type TextResult } from './context.js';
 
 // ---- List Folders ----
 
-const ListFoldersSchema = z.object({
-  project_id: z.string().optional().describe('Filter folders by project ID'),
-  status: z.number().optional().describe('Filter by status (1=active, 2=archived)'),
-  limit: z.number().optional().default(30).describe('Number of folders to return (max 200)'),
+export const listFoldersSchema = z.object({
+  project_id: z.string().optional().describe('Only folders of this project'),
+  status: z.number().int().optional().describe('1=active, 2=archived'),
+  limit: z.number().int().min(1).max(200).optional().default(30).describe('Max folders (1-200)'),
 });
 
 export async function listFolders(
@@ -15,7 +16,7 @@ export async function listFolders(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = ListFoldersSchema.parse(args || {});
+    const params = listFoldersSchema.parse(args || {});
 
     const response = await client.listFolders({
       project_id: params.project_id,
@@ -75,33 +76,10 @@ export async function listFolders(
   }
 }
 
-export const listFoldersTool = {
-  name: 'list_folders',
-  description: 'Get a list of folders',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'Filter folders by project ID',
-      },
-      status: {
-        type: 'number',
-        description: 'Filter by status (1=active, 2=archived)',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of folders to return (max 200)',
-        default: 30,
-      },
-    },
-  },
-};
-
 // ---- Get Folder ----
 
-const GetFolderSchema = z.object({
-  folder_id: z.string().describe('The ID of the folder to retrieve'),
+export const getFolderSchema = z.object({
+  folder_id: z.string().describe('Folder ID'),
 });
 
 export async function getFolder(
@@ -109,7 +87,7 @@ export async function getFolder(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = GetFolderSchema.parse(args || {});
+    const params = getFolderSchema.parse(args || {});
 
     const response = await client.getFolder(params.folder_id);
 
@@ -162,26 +140,11 @@ export async function getFolder(
   }
 }
 
-export const getFolderTool = {
-  name: 'get_folder',
-  description: 'Get details of a specific folder',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      folder_id: {
-        type: 'string',
-        description: 'The ID of the folder to retrieve',
-      },
-    },
-    required: ['folder_id'],
-  },
-};
-
 // ---- Create Folder ----
 
-const CreateFolderSchema = z.object({
-  project_id: z.string().describe('The ID of the project to create the folder in'),
-  name: z.string().describe('Name of the folder'),
+export const createFolderSchema = z.object({
+  project_id: z.string().describe('Project to create the folder in'),
+  name: z.string().describe('Folder name'),
 });
 
 export async function createFolder(
@@ -189,7 +152,7 @@ export async function createFolder(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = CreateFolderSchema.parse(args || {});
+    const params = createFolderSchema.parse(args || {});
 
     const folderData = {
       data: {
@@ -244,25 +207,6 @@ export async function createFolder(
     );
   }
 }
-
-export const createFolderTool = {
-  name: 'create_folder',
-  description: 'Create a new folder in a project',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'The ID of the project to create the folder in',
-      },
-      name: {
-        type: 'string',
-        description: 'Name of the folder',
-      },
-    },
-    required: ['project_id', 'name'],
-  },
-};
 
 // ---- Update Folder ----
 
@@ -324,25 +268,6 @@ export async function updateFolder(
   }
 }
 
-export const updateFolderTool = {
-  name: 'update_folder',
-  description: 'Update an existing folder',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      folder_id: {
-        type: 'string',
-        description: 'The ID of the folder to update',
-      },
-      name: {
-        type: 'string',
-        description: 'New name for the folder',
-      },
-    },
-    required: ['folder_id'],
-  },
-};
-
 // ---- Archive Folder ----
 
 const ArchiveFolderSchema = z.object({
@@ -385,21 +310,6 @@ export async function archiveFolder(
     );
   }
 }
-
-export const archiveFolderTool = {
-  name: 'archive_folder',
-  description: 'Archive a folder',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      folder_id: {
-        type: 'string',
-        description: 'The ID of the folder to archive',
-      },
-    },
-    required: ['folder_id'],
-  },
-};
 
 // ---- Restore Folder ----
 
@@ -444,17 +354,69 @@ export async function restoreFolder(
   }
 }
 
-export const restoreFolderTool = {
-  name: 'restore_folder',
-  description: 'Restore an archived folder',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      folder_id: {
-        type: 'string',
-        description: 'The ID of the folder to restore',
-      },
+export const updateFolderSchema = z.object({
+  folder_id: z.string().describe('Folder to change'),
+  name: z.string().min(1).optional().describe('New name'),
+  archived: z.boolean().optional().describe('true archives the folder, false restores it'),
+});
+
+
+/** One tool for every change to an existing folder: restore, rename, archive (in that order). */
+async function updateFolderTool(client: ProductiveAPIClient, args: z.infer<typeof updateFolderSchema>): Promise<TextResult> {
+  const { folder_id } = args;
+  const steps: Step[] = [];
+
+  if (args.archived === false) {
+    steps.push(['restore', () => restoreFolder(client, { folder_id })]);
+  }
+  if (args.name !== undefined) {
+    steps.push(['name', () => updateFolder(client, { folder_id, name: args.name })]);
+  }
+  if (args.archived === true) {
+    steps.push(['archive', () => archiveFolder(client, { folder_id })]);
+  }
+  return runSteps(steps, 'Nothing to update: pass at least one field besides folder_id');
+}
+
+export const registerFolderTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_folders',
+    {
+      title: 'List folders',
+      description: 'List folders, optionally for one project.',
+      inputSchema: listFoldersSchema,
+      annotations: READ,
     },
-    required: ['folder_id'],
-  },
+    (args) => result(listFolders(client, args))
+  );
+  server.registerTool(
+    'get_folder',
+    {
+      title: 'Get folder',
+      description: 'Get a folder by ID.',
+      inputSchema: getFolderSchema,
+      annotations: READ,
+    },
+    (args) => result(getFolder(client, args))
+  );
+  server.registerTool(
+    'create_folder',
+    {
+      title: 'Create folder',
+      description: 'Create a folder in a project.',
+      inputSchema: createFolderSchema,
+      annotations: WRITE,
+    },
+    (args) => result(createFolder(client, args))
+  );
+  server.registerTool(
+    'update_folder',
+    {
+      title: 'Update folder',
+      description: 'Change an existing folder: rename, archive or restore. Pass only the fields to change.',
+      inputSchema: updateFolderSchema,
+      annotations: WRITE,
+    },
+    (args) => result(updateFolderTool(client, args))
+  );
 };

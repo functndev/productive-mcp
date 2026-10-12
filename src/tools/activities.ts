@@ -1,18 +1,19 @@
 import { z } from 'zod';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveAPIClient } from '../api/client.js';
+import { READ, result, type RegisterTools } from './context.js';
 
-const ListActivitiesRequestSchema = z.object({
-  task_id: z.string().optional(),
-  project_id: z.string().optional(),
-  person_id: z.string().optional(),
-  item_type: z.string().optional(),
-  event: z.string().optional(),
-  after: z.string().optional(), // ISO 8601 date string
-  before: z.string().optional(), // ISO 8601 date string
-  days_back: z.number().min(1).max(365).optional(), // Helper for "last N days"
-  limit: z.number().min(1).max(200).optional(),
-  page: z.number().min(1).optional(),
+export const listActivitiesSchema = z.object({
+  task_id: z.string().optional().describe('Only activities on this task'),
+  project_id: z.string().optional().describe('Only activities in this project'),
+  person_id: z.string().optional().describe('Only activities by this person'),
+  item_type: z.string().optional().describe('Item type, e.g. "Task", "Project", "Workspace"'),
+  event: z.string().optional().describe('Event type, e.g. "create", "update", "delete"'),
+  after: z.string().optional().describe('Only after this ISO 8601 date-time, e.g. "2024-01-01T00:00:00Z"'),
+  before: z.string().optional().describe('Only before this ISO 8601 date-time'),
+  days_back: z.number().min(1).max(365).optional().describe('Only the last N days (1-365), instead of after'),
+  limit: z.number().min(1).max(200).optional().describe('Max activities to return (1-200, default 30)'),
+  page: z.number().min(1).optional().describe('Page number, from 1'),
 });
 
 export async function listActivities(
@@ -20,7 +21,7 @@ export async function listActivities(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = ListActivitiesRequestSchema.parse(args);
+    const params = listActivitiesSchema.parse(args);
     
     // Helper: Convert days_back to 'after' parameter
     let after = params.after;
@@ -110,58 +111,15 @@ export async function listActivities(
   }
 }
 
-export const listActivitiesTool = {
-  name: 'list_activities',
-  description: 'List activities (changes/updates) with filtering options for tracking recent work',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'Filter activities for a specific task ID',
-      },
-      project_id: {
-        type: 'string', 
-        description: 'Filter activities for a specific project ID',
-      },
-      person_id: {
-        type: 'string',
-        description: 'Filter activities by a specific person/user ID',
-      },
-      item_type: {
-        type: 'string',
-        description: 'Filter by item type (e.g., "Task", "Project", "Workspace")',
-      },
-      event: {
-        type: 'string',
-        description: 'Filter by event type (e.g., "create", "update", "delete")',
-      },
-      after: {
-        type: 'string',
-        description: 'Filter activities after this date (ISO 8601 format, e.g., "2024-01-01T00:00:00Z")',
-      },
-      before: {
-        type: 'string',
-        description: 'Filter activities before this date (ISO 8601 format)',
-      },
-      days_back: {
-        type: 'number',
-        description: 'Filter activities from the last N days (1-365). Alternative to using "after"',
-        minimum: 1,
-        maximum: 365,
-      },
-      limit: {
-        type: 'number',
-        description: 'Maximum number of activities to return (1-200, default: 30)',
-        minimum: 1,
-        maximum: 200,
-      },
-      page: {
-        type: 'number',
-        description: 'Page number for pagination (starts from 1)',
-        minimum: 1,
-      },
+export const registerActivityTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_activities',
+    {
+      title: 'List activities',
+      description: 'List the activity log (creates, updates, deletes), filtered by task, project, person, item type, event and date.',
+      inputSchema: listActivitiesSchema,
+      annotations: READ,
     },
-    additionalProperties: false,
-  },
+    (args) => result(listActivities(client, args))
+  );
 };

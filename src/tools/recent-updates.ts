@@ -1,11 +1,12 @@
 import { z } from 'zod';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveAPIClient } from '../api/client.js';
+import { READ, result, type RegisterTools } from './context.js';
 
-const RecentUpdatesRequestSchema = z.object({
-  project_id: z.string().optional(),
-  days_back: z.number().min(1).max(30).default(7),
-  limit: z.number().min(1).max(200).optional(),
+export const recentUpdatesSchema = z.object({
+  project_id: z.string().optional().describe('Only updates in this project'),
+  days_back: z.number().min(1).max(30).default(7).describe('Days to look back (1-30, default 7)'),
+  limit: z.number().min(1).max(200).optional().describe('Max updates to analyse (1-200, default 100)'),
 });
 
 export async function getRecentUpdates(
@@ -13,7 +14,7 @@ export async function getRecentUpdates(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = RecentUpdatesRequestSchema.parse(args);
+    const params = recentUpdatesSchema.parse(args);
     
     // Calculate date range
     const afterDate = new Date();
@@ -121,30 +122,15 @@ export async function getRecentUpdates(
   }
 }
 
-export const getRecentUpdatesTool = {
-  name: 'get_recent_updates',
-  description: 'Get a summary of recent updates and changes in the last N days, with detailed breakdown by item type',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'Optional project ID to filter updates for a specific project',
-      },
-      days_back: {
-        type: 'number',
-        description: 'Number of days to look back for recent updates (1-30, default: 7)',
-        minimum: 1,
-        maximum: 30,
-        default: 7,
-      },
-      limit: {
-        type: 'number',
-        description: 'Maximum number of updates to analyze (1-200, default: 100)',
-        minimum: 1,
-        maximum: 200,
-      },
+export const registerRecentUpdateTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'get_recent_updates',
+    {
+      title: 'Get recent updates',
+      description: 'Summarise the updates of the last N days by item type, followed by each change.',
+      inputSchema: recentUpdatesSchema,
+      annotations: READ,
     },
-    additionalProperties: false,
-  },
+    (args) => result(getRecentUpdates(client, args))
+  );
 };

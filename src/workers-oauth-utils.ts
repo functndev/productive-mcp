@@ -928,13 +928,12 @@ export async function fetchUpstreamAuthToken(params: {
   code?: string;
   redirect_uri: string;
   code_verifier: string;
-}): Promise<[string, string, null] | [null, null, Response]> {
+}): Promise<
+  | { accessToken: string; idToken: string; refreshToken?: string; error?: undefined }
+  | { error: Response }
+> {
   if (!params.code) {
-    return [
-      null,
-      null,
-      new Response("Missing authorization code", { status: 400 }),
-    ];
+    return { error: new Response("Missing authorization code", { status: 400 }) };
   }
 
   const data = new URLSearchParams({
@@ -957,27 +956,25 @@ export async function fetchUpstreamAuthToken(params: {
 
   if (!response.ok) {
     const errorText = await response.text();
-    return [
-      null,
-      null,
-      new Response(`Failed to exchange code for token: ${errorText}`, {
+    return {
+      error: new Response(`Failed to exchange code for token: ${errorText}`, {
         status: response.status,
       }),
-    ];
+    };
   }
 
-  const body = (await response.json()) as any;
-
-  const accessToken = body.access_token as string;
-  if (!accessToken) {
-    return [null, null, new Response("Missing access token", { status: 400 })];
+  const body = (await response.json()) as {
+    access_token?: string;
+    id_token?: string;
+    refresh_token?: string;
+  };
+  if (!body.access_token) {
+    return { error: new Response("Missing access token", { status: 400 }) };
   }
-
-  const idToken = body.id_token as string;
-  if (!idToken) {
-    return [null, null, new Response("Missing id token", { status: 400 })];
+  if (!body.id_token) {
+    return { error: new Response("Missing ID token", { status: 400 }) };
   }
-  return [accessToken, idToken, null];
+  return { accessToken: body.access_token, idToken: body.id_token, refreshToken: body.refresh_token };
 }
 
 /**
@@ -994,5 +991,12 @@ export interface Props {
   adminApiToken?: string;
   /** Origin the MCP client connected to, set per request in index.ts. */
   origin?: string;
+  /** Cloudflare Access refresh token: used on every MCP token refresh to re-check the Access policy. */
+  accessRefreshToken?: string;
+  /**
+   * When Access issued no refresh token the grant can't be re-checked, so it may only be
+   * refreshed until this time (epoch ms); then the user signs in through Access again.
+   */
+  reauthBy?: number;
   [key: string]: unknown;
 }
