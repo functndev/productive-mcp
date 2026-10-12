@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 
 // Zod schema for timesheet prompt arguments
 const timesheetPromptSchema = z.object({
@@ -109,10 +109,10 @@ Please tell me which project you worked on, or I can list all active projects fo
 \`list_project_deals project_id="[PROJECT_ID]"\` to show budgets/deals for that project
 
 **Step 3:** After you select a budget, I'll run:
-\`list_deal_services deal_id="[DEAL_ID]"\` to show available services
+\`list_services deal_id="[DEAL_ID]"\` to show available services
 
 **Step 4:** With the project_id, I'll run:
-\`get_project_tasks project_id="[PROJECT_ID]"\` to show tasks you can link to (recommended)
+\`list_tasks project_id="[PROJECT_ID]"\` to show tasks you can link to (recommended)
 
 **Step 5:** Finally, I'll prepare your time entry for confirmation:
 \`create_time_entry\` with all the selected details plus your detailed work description
@@ -194,12 +194,12 @@ export async function generateQuickTimesheetPrompt(args: unknown): Promise<{
         
       case 'service':
         stepGuidance = '**STEP 3: ⚙️ SERVICE SELECTION**\nTime to pick the specific service type for your work.';
-        nextAction = `Use: \`list_deal_services deal_id="${params.deal_id}"\` to see services for this budget.`;
+        nextAction = `Use: \`list_services deal_id="${params.deal_id}"\` to see services for this budget.`;
         break;
         
       case 'task':
         stepGuidance = '**STEP 4: 📋 TASK SELECTION (Recommended)**\nLet\'s link your time to a specific task.';
-        nextAction = `Use: \`get_project_tasks project_id="${params.project_id}"\` to see available tasks.`;
+        nextAction = `Use: \`list_tasks project_id="${params.project_id}"\` to see available tasks.`;
         break;
         
       case 'create':

@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
+import { READ, WRITE, result, runSteps, type RegisterTools, type Step, type TextResult } from './context.js';
 
-const ListTaskListsSchema = z.object({
-  board_id: z.string().optional().describe('Filter task lists by board ID'),
-  limit: z.number().optional().default(30).describe('Number of task lists to return (max 200)'),
+export const listTaskListsSchema = z.object({
+  board_id: z.string().optional().describe('Only task lists of this board'),
+  limit: z.number().int().min(1).max(200).optional().default(30).describe('Max task lists (1-200)'),
 });
 
 export async function listTaskLists(
@@ -12,7 +13,7 @@ export async function listTaskLists(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = ListTaskListsSchema.parse(args || {});
+    const params = listTaskListsSchema.parse(args || {});
     
     const response = await client.listTaskLists({
       board_id: params.board_id,
@@ -71,30 +72,11 @@ export async function listTaskLists(
   }
 }
 
-export const listTaskListsTool = {
-  name: 'list_task_lists',
-  description: 'Get a list of task lists from Productive.io. Task lists organize tasks within boards.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      board_id: {
-        type: 'string',
-        description: 'Filter task lists by board ID',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of task lists to return (max 200)',
-        default: 30,
-      },
-    },
-  },
-};
-
-const CreateTaskListSchema = z.object({
-  board_id: z.string().describe('The ID of the board to create the task list in'),
-  project_id: z.string().describe('The ID of the project'),
-  name: z.string().describe('Name of the task list'),
-  description: z.string().optional().describe('Description of the task list'),
+export const createTaskListSchema = z.object({
+  board_id: z.string().describe('Board to create the task list in'),
+  project_id: z.string().describe('Project of that board'),
+  name: z.string().describe('Task list name'),
+  description: z.string().optional().describe('Task list description'),
 });
 
 export async function createTaskList(
@@ -102,7 +84,7 @@ export async function createTaskList(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = CreateTaskListSchema.parse(args);
+    const params = createTaskListSchema.parse(args);
     
     const taskListData = {
       data: {
@@ -164,37 +146,10 @@ export async function createTaskList(
   }
 }
 
-export const createTaskListTool = {
-  name: 'create_task_list',
-  description: 'Create a new task list in a Productive.io board. Task lists help organize tasks within boards.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      board_id: {
-        type: 'string',
-        description: 'The ID of the board to create the task list in',
-      },
-      project_id: {
-        type: 'string',
-        description: 'The ID of the project',
-      },
-      name: {
-        type: 'string',
-        description: 'Name of the task list',
-      },
-      description: {
-        type: 'string',
-        description: 'Description of the task list',
-      },
-    },
-    required: ['board_id', 'project_id', 'name'],
-  },
-};
-
 // --- Get Task List ---
 
-const GetTaskListSchema = z.object({
-  task_list_id: z.string().describe('The ID of the task list to retrieve'),
+export const getTaskListSchema = z.object({
+  task_list_id: z.string().describe('Task list ID'),
 });
 
 export async function getTaskList(
@@ -202,7 +157,7 @@ export async function getTaskList(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = GetTaskListSchema.parse(args);
+    const params = getTaskListSchema.parse(args);
 
     const response = await client.getTaskList(params.task_list_id);
 
@@ -248,23 +203,6 @@ export async function getTaskList(
     );
   }
 }
-
-export const getTaskListTool = {
-  name: 'get_task_list',
-  description: 'Get a single task list by ID from Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_list_id: {
-        type: 'string',
-        description: 'The ID of the task list to retrieve',
-      },
-    },
-    required: ['task_list_id'],
-  },
-};
-
-export const getTaskListDefinition = getTaskListTool;
 
 // --- Update Task List ---
 
@@ -327,27 +265,6 @@ export async function updateTaskList(
   }
 }
 
-export const updateTaskListTool = {
-  name: 'update_task_list',
-  description: 'Update an existing task list in Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_list_id: {
-        type: 'string',
-        description: 'The ID of the task list to update',
-      },
-      name: {
-        type: 'string',
-        description: 'New name for the task list',
-      },
-    },
-    required: ['task_list_id'],
-  },
-};
-
-export const updateTaskListDefinition = updateTaskListTool;
-
 // --- Archive Task List ---
 
 const ArchiveTaskListSchema = z.object({
@@ -390,23 +307,6 @@ export async function archiveTaskList(
     );
   }
 }
-
-export const archiveTaskListTool = {
-  name: 'archive_task_list',
-  description: 'Archive a task list in Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_list_id: {
-        type: 'string',
-        description: 'The ID of the task list to archive',
-      },
-    },
-    required: ['task_list_id'],
-  },
-};
-
-export const archiveTaskListDefinition = archiveTaskListTool;
 
 // --- Restore Task List ---
 
@@ -451,32 +351,15 @@ export async function restoreTaskList(
   }
 }
 
-export const restoreTaskListTool = {
-  name: 'restore_task_list',
-  description: 'Restore a previously archived task list in Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_list_id: {
-        type: 'string',
-        description: 'The ID of the task list to restore',
-      },
-    },
-    required: ['task_list_id'],
-  },
-};
-
-export const restoreTaskListDefinition = restoreTaskListTool;
-
 // --- Copy Task List ---
 
-const CopyTaskListSchema = z.object({
-  name: z.string().describe('Name for the copied task list'),
-  template_id: z.string().describe('The ID of the source task list to copy from'),
-  project_id: z.string().describe('The ID of the project for the new task list'),
-  board_id: z.string().describe('The ID of the board for the new task list'),
-  copy_open_tasks: z.boolean().optional().describe('Whether to copy open tasks from the template'),
-  copy_assignees: z.boolean().optional().describe('Whether to copy assignees from the template'),
+export const copyTaskListSchema = z.object({
+  name: z.string().describe('Name of the new task list'),
+  template_id: z.string().describe('Task list to copy'),
+  project_id: z.string().describe('Project for the new task list'),
+  board_id: z.string().describe('Board for the new task list'),
+  copy_open_tasks: z.boolean().optional().describe("Also copy the template's open tasks"),
+  copy_assignees: z.boolean().optional().describe("Also copy the tasks' assignees"),
 });
 
 export async function copyTaskList(
@@ -484,7 +367,7 @@ export async function copyTaskList(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = CopyTaskListSchema.parse(args);
+    const params = copyTaskListSchema.parse(args);
 
     const response = await client.copyTaskList({
       name: params.name,
@@ -531,43 +414,6 @@ export async function copyTaskList(
   }
 }
 
-export const copyTaskListTool = {
-  name: 'copy_task_list',
-  description: 'Copy a task list from a template in Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      name: {
-        type: 'string',
-        description: 'Name for the copied task list',
-      },
-      template_id: {
-        type: 'string',
-        description: 'The ID of the source task list to copy from',
-      },
-      project_id: {
-        type: 'string',
-        description: 'The ID of the project for the new task list',
-      },
-      board_id: {
-        type: 'string',
-        description: 'The ID of the board for the new task list',
-      },
-      copy_open_tasks: {
-        type: 'boolean',
-        description: 'Whether to copy open tasks from the template',
-      },
-      copy_assignees: {
-        type: 'boolean',
-        description: 'Whether to copy assignees from the template',
-      },
-    },
-    required: ['name', 'template_id', 'project_id', 'board_id'],
-  },
-};
-
-export const copyTaskListDefinition = copyTaskListTool;
-
 // --- Move Task List ---
 
 const MoveTaskListSchema = z.object({
@@ -611,27 +457,6 @@ export async function moveTaskList(
     );
   }
 }
-
-export const moveTaskListTool = {
-  name: 'move_task_list',
-  description: 'Move a task list to a different board in Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_list_id: {
-        type: 'string',
-        description: 'The ID of the task list to move',
-      },
-      board_id: {
-        type: 'string',
-        description: 'The ID of the destination board',
-      },
-    },
-    required: ['task_list_id', 'board_id'],
-  },
-};
-
-export const moveTaskListDefinition = moveTaskListTool;
 
 // --- Reposition Task List ---
 
@@ -677,23 +502,90 @@ export async function repositionTaskList(
   }
 }
 
-export const repositionTaskListTool = {
-  name: 'reposition_task_list',
-  description: 'Reposition a task list before another task list in Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_list_id: {
-        type: 'string',
-        description: 'The ID of the task list to reposition',
-      },
-      move_before_id: {
-        type: 'string',
-        description: 'The ID of the task list to move before',
-      },
-    },
-    required: ['task_list_id', 'move_before_id'],
-  },
-};
+export const updateTaskListSchema = z.object({
+  task_list_id: z.string().describe('Task list to change'),
+  name: z.string().min(1).optional().describe('New name'),
+  archived: z.boolean().optional().describe('true archives the task list, false restores it'),
+  board_id: z.string().optional().describe('Move the task list to this board'),
+  move_before_id: z.string().optional().describe('Reposition: place before this task list'),
+});
 
-export const repositionTaskListDefinition = repositionTaskListTool;
+
+/**
+ * One tool for every change to an existing task list. Each requested change runs the dedicated
+ * implementation (restore, rename, move, reposition, archive), in that order.
+ */
+async function updateTaskListTool(client: ProductiveAPIClient, args: z.infer<typeof updateTaskListSchema>): Promise<TextResult> {
+  const { task_list_id } = args;
+  const steps: Step[] = [];
+
+  if (args.archived === false) {
+    steps.push(['restore', () => restoreTaskList(client, { task_list_id })]);
+  }
+  if (args.name !== undefined) {
+    steps.push(['name', () => updateTaskList(client, { task_list_id, name: args.name })]);
+  }
+  if (args.board_id) {
+    steps.push(['move to board', () => moveTaskList(client, { task_list_id, board_id: args.board_id })]);
+  }
+  if (args.move_before_id) {
+    steps.push(['position', () => repositionTaskList(client, { task_list_id, move_before_id: args.move_before_id })]);
+  }
+  if (args.archived === true) {
+    steps.push(['archive', () => archiveTaskList(client, { task_list_id })]);
+  }
+  return runSteps(steps, 'Nothing to update: pass at least one field besides task_list_id');
+}
+
+export const registerTaskListTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_task_lists',
+    {
+      title: 'List task lists',
+      description: 'List task lists, optionally for one board. Task lists group tasks within a board.',
+      inputSchema: listTaskListsSchema,
+      annotations: READ,
+    },
+    (args) => result(listTaskLists(client, args))
+  );
+  server.registerTool(
+    'get_task_list',
+    {
+      title: 'Get task list',
+      description: 'Get a task list by ID.',
+      inputSchema: getTaskListSchema,
+      annotations: READ,
+    },
+    (args) => result(getTaskList(client, args))
+  );
+  server.registerTool(
+    'create_task_list',
+    {
+      title: 'Create task list',
+      description: 'Create a task list in a board.',
+      inputSchema: createTaskListSchema,
+      annotations: WRITE,
+    },
+    (args) => result(createTaskList(client, args))
+  );
+  server.registerTool(
+    'copy_task_list',
+    {
+      title: 'Copy task list',
+      description: 'Create a task list as a copy of another (template) task list, optionally with its open tasks and assignees.',
+      inputSchema: copyTaskListSchema,
+      annotations: WRITE,
+    },
+    (args) => result(copyTaskList(client, args))
+  );
+  server.registerTool(
+    'update_task_list',
+    {
+      title: 'Update task list',
+      description: 'Change an existing task list: rename, archive or restore, move to another board, or reposition. Pass only the fields to change.',
+      inputSchema: updateTaskListSchema,
+      annotations: WRITE,
+    },
+    (args) => result(updateTaskListTool(client, args))
+  );
+};

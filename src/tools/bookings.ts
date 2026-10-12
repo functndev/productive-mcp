@@ -1,19 +1,21 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { READ, result, type RegisterTools } from './context.js';
+import { McpError, ErrorCode } from '../errors.js';
 import type { ProductiveBooking, ProductiveIncludedResource } from '../api/types.js';
 
 // ---- Schemas ----
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
 
-const listBookingsSchema = z.object({
-  after: isoDate,
-  before: isoDate,
-  person_id: z.string().optional(),
-  project_id: z.string().optional(),
-  include_drafts: z.boolean().default(true).optional(),
-  group_by: z.enum(['project', 'person', 'none']).default('project').optional(),
+export const listBookingsSchema = z.object({
+  after: isoDate.describe('Range start, YYYY-MM-DD (inclusive)'),
+  before: isoDate.describe('Range end, YYYY-MM-DD (inclusive)'),
+  person_id: z.string().optional().describe('Only bookings of this person'),
+  project_id: z.string().optional().describe('Only bookings on this project'),
+  include_drafts: z.boolean().default(true).optional().describe('Include tentative (draft) bookings, flagged as tentative (default true)'),
+  group_by: z.enum(['project', 'person', 'none']).default('project').optional()
+    .describe('project (default): hours per project with people; person: hours per person with projects; none: one row per booking'),
 });
 
 // Percentage bookings are relative to capacity, which the booking doesn't carry.
@@ -172,43 +174,19 @@ export async function listBookingsTool(
   }
 }
 
-// ---- Definitions ----
+// ---- Registration ----
 
-export const listBookingsDefinition = {
-  name: 'list_bookings',
-  description:
-    'List resource-planning bookings (scheduled work and absences) that overlap a date range. ' +
-    'By default grouped by project with booked hours per person — use this for "what is scheduled this week". ' +
-    'Hours count weekdays inside the range only (public holidays are not subtracted); percentage bookings assume an 8h day.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      after: {
-        type: 'string',
-        description: 'Range start, YYYY-MM-DD (inclusive, required)',
-      },
-      before: {
-        type: 'string',
-        description: 'Range end, YYYY-MM-DD (inclusive, required)',
-      },
-      person_id: {
-        type: 'string',
-        description: 'Only bookings of this person',
-      },
-      project_id: {
-        type: 'string',
-        description: 'Only bookings on this project',
-      },
-      include_drafts: {
-        type: 'boolean',
-        description: 'Include tentative (draft) bookings, flagged as tentative (default true)',
-      },
-      group_by: {
-        type: 'string',
-        enum: ['project', 'person', 'none'],
-        description: 'project (default): hours per project with people; person: hours per person with projects; none: one row per booking',
-      },
+export const registerBookingTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_bookings',
+    {
+      title: 'List bookings',
+      description:
+        'List resource-planning bookings (scheduled work and absences) overlapping a date range, by default as hours per project and person. ' +
+        'Counts weekdays in the range only (public holidays not subtracted); percentage bookings assume an 8h day.',
+      inputSchema: listBookingsSchema,
+      annotations: READ,
     },
-    required: ['after', 'before'],
-  },
+    (args) => result(listBookingsTool(client, args))
+  );
 };

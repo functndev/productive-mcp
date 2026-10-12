@@ -2,31 +2,28 @@
  * For more details on how to configure Wrangler, refer to:
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  */
-/**
- * For more details on how to configure Wrangler, refer to:
- * https://developers.cloudflare.com/workers/wrangler/configuration/
- */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "productive-mcp",
   "main": "src/index.ts",
   "workers_dev": false,
-  "compatibility_date": "2025-03-10",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": [
+    "nodejs_compat",
+    // Required by @cloudflare/workers-oauth-provider for Client ID Metadata Documents.
+    "global_fetch_strictly_public",
+  ],
   "migrations": [
     {
       "new_sqlite_classes": ["ProductiveMcp"],
       "tag": "v1",
     },
+    {
+      // The MCP endpoint is stateless now; the per-session Durable Object held no data.
+      "deleted_classes": ["ProductiveMcp"],
+      "tag": "v2",
+    },
   ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "class_name": "ProductiveMcp",
-        "name": "MCP_OBJECT",
-      },
-    ],
-  },
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
@@ -40,7 +37,11 @@
   "upload_source_maps": true,
   "vars": {
     "PRODUCTIVE_API_BASE_URL": "https://api.productive.io/api/v2/",
+    // Canonical origin: the OAuth resource is <PUBLIC_URL>/mcp.
+    "PUBLIC_URL": "https://productive-mcp.functn.com",
   },
+  // Daily sweep of expired OAuth records (purgeExpiredData).
+  "triggers": { "crons": ["23 3 * * *"] },
   // Secrets (set via `wrangler secret put <NAME>`):
   //   PRODUCTIVE_ORG_ID         - your Productive organization ID
   //   USER_MAPPING              - JSON: { "<email>": { "userId": <id>, "apiToken": "<token>" }, ... }

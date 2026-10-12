@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveIncludedResource } from '../api/types.js';
+import { READ, WRITE, result, resolveMe, type RegisterTools } from './context.js';
 
 function resolvePersonName(personId: string | undefined, included?: ProductiveIncludedResource[]): string | undefined {
   if (!personId || !included) return undefined;
@@ -19,10 +20,10 @@ function resolveWorkflowStatus(task: { relationships?: Record<string, any> }, in
   return status?.attributes?.name || undefined;
 }
 
-const listSubtasksSchema = z.object({
-  parent_task_id: z.string().min(1, 'Parent task ID is required'),
-  limit: z.number().min(1).max(200).default(30).optional(),
-  page: z.number().min(1).default(1).optional(),
+export const listSubtasksSchema = z.object({
+  parent_task_id: z.string().min(1, 'Parent task ID is required').describe('ID of the parent task'),
+  limit: z.number().int().min(1).max(200).default(30).optional().describe('Subtasks per page (1-200, default 30)'),
+  page: z.number().int().min(1).default(1).optional().describe('Page number (default 1)'),
 });
 
 export async function listSubtasksTool(
@@ -108,42 +109,14 @@ export async function listSubtasksTool(
   }
 }
 
-export const listSubtasksDefinition = {
-  name: 'list_subtasks',
-  description: 'List subtasks of a parent task in Productive.io',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      parent_task_id: {
-        type: 'string',
-        description: 'The ID of the parent task (required)',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of subtasks to return (1-200, default: 30)',
-        minimum: 1,
-        maximum: 200,
-        default: 30,
-      },
-      page: {
-        type: 'number',
-        description: 'Page number for pagination (default: 1)',
-        minimum: 1,
-        default: 1,
-      },
-    },
-    required: ['parent_task_id'],
-  },
-};
-
-const createSubtaskSchema = z.object({
-  parent_task_id: z.string().min(1, 'Parent task ID is required'),
+export const createSubtaskSchema = z.object({
+  parent_task_id: z.string().min(1, 'Parent task ID is required').describe('ID of the parent task'),
   title: z.string().min(1, 'Task title is required'),
   description: z.string().optional(),
-  project_id: z.string().optional(),
-  task_list_id: z.string().optional(),
-  assignee_id: z.string().optional(),
-  due_date: z.string().optional(),
+  project_id: z.string().optional().describe('Project to add the subtask to'),
+  task_list_id: z.string().optional().describe('Task list to add the subtask to'),
+  assignee_id: z.string().optional().describe('Person ID to assign the subtask to, or "me"'),
+  due_date: z.string().optional().describe('YYYY-MM-DD'),
 });
 
 export async function createSubtaskTool(
@@ -238,41 +211,25 @@ export async function createSubtaskTool(
   }
 }
 
-export const createSubtaskDefinition = {
-  name: 'create_subtask',
-  description: 'Create a subtask under a parent task in Productive.io',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      parent_task_id: {
-        type: 'string',
-        description: 'The ID of the parent task (required)',
-      },
-      title: {
-        type: 'string',
-        description: 'Subtask title (required)',
-      },
-      description: {
-        type: 'string',
-        description: 'Subtask description',
-      },
-      project_id: {
-        type: 'string',
-        description: 'ID of the project to add the subtask to',
-      },
-      task_list_id: {
-        type: 'string',
-        description: 'ID of the task list to add the subtask to',
-      },
-      assignee_id: {
-        type: 'string',
-        description: 'ID of the person to assign the subtask to',
-      },
-      due_date: {
-        type: 'string',
-        description: 'Due date in YYYY-MM-DD format',
-      },
+export const registerSubtaskTools: RegisterTools = (server, { client, config }) => {
+  server.registerTool(
+    'list_subtasks',
+    {
+      title: 'List subtasks',
+      description: 'List the subtasks of a task.',
+      inputSchema: listSubtasksSchema,
+      annotations: READ,
     },
-    required: ['parent_task_id', 'title'],
-  },
+    (args) => result(listSubtasksTool(client, args))
+  );
+  server.registerTool(
+    'create_subtask',
+    {
+      title: 'Create subtask',
+      description: 'Create a subtask under a parent task.',
+      inputSchema: createSubtaskSchema,
+      annotations: WRITE,
+    },
+    (args) => result(createSubtaskTool(client, { ...args, assignee_id: args.assignee_id && resolveMe(args.assignee_id, config) }))
+  );
 };

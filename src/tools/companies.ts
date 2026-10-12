@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
+import { READ, result, type RegisterTools } from './context.js';
 
-const listCompaniesSchema = z.object({
-  status: z.enum(['active', 'archived']).optional(),
-  limit: z.number().min(1).max(200).default(30).optional(),
+export const listCompaniesSchema = z.object({
+  status: z.enum(['active', 'archived']).optional().describe('Filter by company status'),
+  limit: z.number().int().min(1).max(200).default(30).optional().describe('Max companies (1-200)'),
 });
 
 export async function listCompaniesTool(
@@ -62,24 +63,15 @@ export async function listCompaniesTool(
   }
 }
 
-export const listCompaniesDefinition = {
-  name: 'list_companies',
-  description: 'Get a list of companies/customers from Productive.io',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      status: {
-        type: 'string',
-        enum: ['active', 'archived'],
-        description: 'Filter by company status',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of companies to return (1-200)',
-        minimum: 1,
-        maximum: 200,
-        default: 30,
-      },
+export const registerCompanyTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_companies',
+    {
+      title: 'List companies',
+      description: 'List companies (customers).',
+      inputSchema: listCompaniesSchema,
+      annotations: READ,
     },
-  },
+    (args) => result(listCompaniesTool(client, args))
+  );
 };

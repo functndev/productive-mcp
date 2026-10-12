@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveIncludedResource } from '../api/types.js';
+import { READ, WRITE, result, type RegisterTools } from './context.js';
 
 function resolveTaskTitle(taskId: string | undefined, included?: ProductiveIncludedResource[]): string | undefined {
   if (!taskId || !included) return undefined;
@@ -20,20 +21,20 @@ function dependencyTypeLabel(typeId: number): string {
 
 // ---- Schemas ----
 
-const listTaskDependenciesSchema = z.object({
-  task_id: z.string().optional().describe('Filter by source task ID (the blocker)'),
-  dependent_task_id: z.string().optional().describe('Filter by dependent task ID (the blocked task)'),
-  limit: z.number().min(1).max(200).default(50).optional(),
+export const listTaskDependenciesSchema = z.object({
+  task_id: z.string().optional().describe('Source task (the blocker): shows what this task blocks'),
+  dependent_task_id: z.string().optional().describe('Dependent task (the blocked one): shows what blocks this task'),
+  limit: z.number().int().min(1).max(200).default(50).optional().describe('Max results (1-200, default 50)'),
 });
 
-const getTaskDependencySchema = z.object({
+export const getTaskDependencySchema = z.object({
   dependency_id: z.string().min(1, 'Dependency ID is required'),
 });
 
-const createTaskDependencySchema = z.object({
-  task_id: z.string().min(1, 'Task ID is required (the blocker)'),
-  dependent_task_id: z.string().min(1, 'Dependent task ID is required (the blocked task)'),
-  type_id: z.number().min(1).max(3).default(1).describe('1 = blocks (finish to start), 2 = is blocked by, 3 = related to'),
+export const createTaskDependencySchema = z.object({
+  task_id: z.string().min(1, 'Task ID is required (the blocker)').describe('Source task (the blocker)'),
+  dependent_task_id: z.string().min(1, 'Dependent task ID is required (the blocked task)').describe('Dependent task (the blocked one)'),
+  type_id: z.number().int().min(1).max(3).default(1).describe('1 = blocks (finish to start, default), 2 = is blocked by, 3 = related to'),
 });
 
 const deleteTaskDependencySchema = z.object({
@@ -178,80 +179,35 @@ export async function deleteTaskDependencyTool(
   }
 }
 
-// ---- Definitions ----
-
-export const listTaskDependenciesDefinition = {
-  name: 'list_task_dependencies',
-  description: 'List task dependencies (blockers/related tasks). Filter by task_id to see what a task blocks, or dependent_task_id to see what blocks a task.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'Filter by source task ID — shows tasks that this task blocks',
-      },
-      dependent_task_id: {
-        type: 'string',
-        description: 'Filter by dependent task ID — shows tasks that block this task',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of results to return (1-200, default: 50)',
-      },
+export const registerTaskDependencyTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_task_dependencies',
+    {
+      title: 'List task dependencies',
+      description: 'List blocker/related links between tasks: filter by task_id for what a task blocks, or dependent_task_id for what blocks it.',
+      inputSchema: listTaskDependenciesSchema,
+      annotations: READ,
     },
-  },
-};
-
-export const getTaskDependencyDefinition = {
-  name: 'get_task_dependency',
-  description: 'Get details of a specific task dependency by ID.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      dependency_id: {
-        type: 'string',
-        description: 'ID of the task dependency to retrieve (required)',
-      },
+    (args) => result(listTaskDependenciesTool(client, args))
+  );
+  server.registerTool(
+    'get_task_dependency',
+    {
+      title: 'Get task dependency',
+      description: 'Get one task dependency with both tasks and its type.',
+      inputSchema: getTaskDependencySchema,
+      annotations: READ,
     },
-    required: ['dependency_id'],
-  },
-};
-
-export const createTaskDependencyDefinition = {
-  name: 'create_task_dependency',
-  description: 'Create a dependency between two tasks. Use type_id 1 for "blocks" (task must finish before dependent_task can start), 2 for "is blocked by", 3 for "related to".',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'ID of the source task (the blocker) — required',
-      },
-      dependent_task_id: {
-        type: 'string',
-        description: 'ID of the dependent task (the blocked task) — required',
-      },
-      type_id: {
-        type: 'number',
-        description: 'Dependency type: 1 = blocks (finish to start), 2 = is blocked by, 3 = related to. Default: 1',
-        default: 1,
-      },
+    (args) => result(getTaskDependencyTool(client, args))
+  );
+  server.registerTool(
+    'create_task_dependency',
+    {
+      title: 'Create task dependency',
+      description: 'Link two tasks: task_id blocks dependent_task_id (type 1), is blocked by it (2), or is related to it (3).',
+      inputSchema: createTaskDependencySchema,
+      annotations: WRITE,
     },
-    required: ['task_id', 'dependent_task_id'],
-  },
-};
-
-export const deleteTaskDependencyDefinition = {
-  name: 'delete_task_dependency',
-  description: 'Delete a task dependency by ID.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      dependency_id: {
-        type: 'string',
-        description: 'ID of the task dependency to delete (required)',
-      },
-    },
-    required: ['dependency_id'],
-  },
+    (args) => result(createTaskDependencyTool(client, args))
+  );
 };

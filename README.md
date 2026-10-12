@@ -12,7 +12,7 @@ Flow:
 2. User authenticates through Access (any IdP you have configured).
 3. Access redirects back to `/callback` with an authorization code. The Worker exchanges it for `access_token` + `id_token`, verifies the `id_token` against `ACCESS_JWKS_URL`, and reads the `email` claim.
 4. Email is looked up in the `USER_MAPPING` secret. Unknown emails get `403`.
-5. Worker calls `OAUTH_PROVIDER.completeAuthorization()` with `props` containing the resolved `productiveUserId` + `productiveApiToken`. Those props are persisted in `OAUTH_KV` and exposed as `this.props` inside the MCP Durable Object on every subsequent `/mcp` request.
+5. Worker calls `OAUTH_PROVIDER.completeAuthorization()` with `props` containing the resolved `productiveUserId` + `productiveApiToken`. Those props are persisted in `OAUTH_KV` and passed as `ctx.props` to every subsequent `/mcp` request, which builds a fresh, stateless MCP server for that user.
 
 ## Endpoints
 

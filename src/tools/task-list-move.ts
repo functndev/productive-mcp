@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 
 const moveTaskToListSchema = z.object({
   task_id: z.string().describe('ID of the task to move'),
@@ -47,21 +47,3 @@ export async function moveTaskToList(
   }
 }
 
-export const moveTaskToListTool = {
-  name: 'move_task_to_list',
-  description: 'Move a task to a different task list within the same project',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'ID of the task to move'
-      },
-      task_list_id: {
-        type: 'string',
-        description: 'ID of the task list to move the task to'
-      }
-    },
-    required: ['task_id', 'task_list_id']
-  }
-};

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { READ, result, type RegisterTools } from './context.js';
+import { McpError, ErrorCode } from '../errors.js';
 import type { ProductiveDeal, ProductiveIncludedResource } from '../api/types.js';
 
 // ---- Schemas ----
@@ -10,13 +11,13 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
 const SALES_STATUSES = { open: 1, won: 2, lost: 3, delivered: 4 } as const;
 const SALES_STATUS_NAMES: Record<number, string> = { 1: 'open', 2: 'won', 3: 'lost', 4: 'delivered' };
 
-const listDealsSchema = z.object({
-  since: isoDate,
-  created_only: z.boolean().default(false).optional(),
-  include_budgets: z.boolean().default(false).optional(),
-  sales_status: z.enum(['open', 'won', 'lost', 'delivered']).optional(),
-  company_id: z.string().optional(),
-  responsible_id: z.string().optional(),
+export const listDealsSchema = z.object({
+  since: isoDate.describe('YYYY-MM-DD: deals with activity on/after this date (or created, with created_only)'),
+  created_only: z.boolean().default(false).optional().describe('Only deals created on/after since (default false: created or updated)'),
+  include_budgets: z.boolean().default(false).optional().describe('Also return budgets, not just sales deals (default false)'),
+  sales_status: z.enum(['open', 'won', 'lost', 'delivered']).optional().describe('Only deals with this sales status'),
+  company_id: z.string().optional().describe('Only deals of this company'),
+  responsible_id: z.string().optional().describe('Only deals this person is responsible for'),
 });
 
 const MAX_API_PAGES = 5;
@@ -118,44 +119,20 @@ export async function listDealsTool(
   }
 }
 
-// ---- Definitions ----
+// ---- Registration ----
 
-export const listDealsDefinition = {
-  name: 'list_deals',
-  description:
-    'List sales deals across all projects that were created or updated on/after a date, newest activity first. ' +
-    'Each deal has company, responsible person, pipeline, stage, sales status (open/won/lost/delivered), ' +
-    'probability, raw amounts, and `changes` saying what happened since the date ' +
-    '(most significant first: won, lost, created, stage_changed, or just updated). Use for "what happened in sales this week".',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      since: {
-        type: 'string',
-        description: 'YYYY-MM-DD (required). Deals with activity on/after this date (or created, with created_only)',
-      },
-      created_only: {
-        type: 'boolean',
-        description: 'Only deals created on/after `since` (default false: created or updated)',
-      },
-      include_budgets: {
-        type: 'boolean',
-        description: 'Also return budgets, not just sales deals (default false)',
-      },
-      sales_status: {
-        type: 'string',
-        enum: ['open', 'won', 'lost', 'delivered'],
-        description: 'Only deals with this sales status',
-      },
-      company_id: {
-        type: 'string',
-        description: 'Only deals of this company',
-      },
-      responsible_id: {
-        type: 'string',
-        description: 'Only deals this person is responsible for',
-      },
+export const registerDealTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_deals',
+    {
+      title: 'List deals',
+      description:
+        'List sales deals created or updated on/after a date, newest activity first, with company, responsible, pipeline, stage, ' +
+        'sales status, probability, raw amounts and `changes` since the date (won, lost, created, stage_changed or updated). ' +
+        'Use for "what happened in sales this week".',
+      inputSchema: listDealsSchema,
+      annotations: READ,
     },
-    required: ['since'],
-  },
+    (args) => result(listDealsTool(client, args))
+  );
 };

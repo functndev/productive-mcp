@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
+import { READ, WRITE, result, type RegisterTools } from './context.js';
 
-const ListBoardsSchema = z.object({
-  project_id: z.string().optional().describe('Filter boards by project ID'),
-  limit: z.number().optional().default(30).describe('Number of boards to return (max 200)'),
+export const listBoardsSchema = z.object({
+  project_id: z.string().optional().describe('Only boards of this project'),
+  limit: z.number().int().min(1).max(200).optional().default(30).describe('Max boards (1-200)'),
 });
 
 export async function listBoards(
@@ -12,7 +13,7 @@ export async function listBoards(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = ListBoardsSchema.parse(args || {});
+    const params = listBoardsSchema.parse(args || {});
     
     const response = await client.listBoards({
       project_id: params.project_id,
@@ -72,29 +73,10 @@ export async function listBoards(
   }
 }
 
-export const listBoardsTool = {
-  name: 'list_boards',
-  description: 'Get a list of boards from Productive.io',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'Filter boards by project ID',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of boards to return (max 200)',
-        default: 30,
-      },
-    },
-  },
-};
-
-const CreateBoardSchema = z.object({
-  project_id: z.string().describe('The ID of the project to create the board in'),
-  name: z.string().describe('Name of the board'),
-  description: z.string().optional().describe('Description of the board'),
+export const createBoardSchema = z.object({
+  project_id: z.string().describe('Project to create the board in'),
+  name: z.string().describe('Board name'),
+  description: z.string().optional().describe('Board description'),
 });
 
 export async function createBoard(
@@ -102,7 +84,7 @@ export async function createBoard(
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = CreateBoardSchema.parse(args || {});
+    const params = createBoardSchema.parse(args || {});
     
     const boardData = {
       data: {
@@ -162,25 +144,25 @@ export async function createBoard(
   }
 }
 
-export const createBoardTool = {
-  name: 'create_board',
-  description: 'Create a new board in a Productive.io project',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'The ID of the project to create the board in',
-      },
-      name: {
-        type: 'string',
-        description: 'Name of the board',
-      },
-      description: {
-        type: 'string',
-        description: 'Description of the board',
-      },
+export const registerBoardTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_boards',
+    {
+      title: 'List boards',
+      description: 'List boards, optionally for one project. Boards hold task lists.',
+      inputSchema: listBoardsSchema,
+      annotations: READ,
     },
-    required: ['project_id', 'name'],
-  },
+    (args) => result(listBoards(client, args))
+  );
+  server.registerTool(
+    'create_board',
+    {
+      title: 'Create board',
+      description: 'Create a board in a project.',
+      inputSchema: createBoardSchema,
+      annotations: WRITE,
+    },
+    (args) => result(createBoard(client, args))
+  );
 };

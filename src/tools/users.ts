@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveAPIClient } from "../api/client.js";
+import { READ, result, type RegisterTools } from './context.js';
 
-const ListUsersArgsSchema = z.object({});
+export const listUsersSchema = z.object({});
 
 /**
  * List internal Productive users.
@@ -17,7 +18,7 @@ export async function listUsers(
   adminApiToken: string | undefined,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    ListUsersArgsSchema.parse(args);
+    listUsersSchema.parse(args);
 
     if (!adminApiToken) {
       throw new McpError(
@@ -73,12 +74,15 @@ export async function listUsers(
   }
 }
 
-export const listUsersTool = {
-  name: "list_users",
-  description:
-    "List all internal Productive users (active, login-able people only — excludes contacts, placeholders and agents). Returns id, name, email, role. Always executed against an admin token configured server-side.",
-  inputSchema: {
-    type: "object",
-    properties: {},
-  },
+export const registerUserTools: RegisterTools = (server, { client, config }) => {
+  server.registerTool(
+    "list_users",
+    {
+      title: "List users",
+      description: "List all internal users (active, login-able people; no contacts, placeholders or agents) with id, name, email and role.",
+      inputSchema: listUsersSchema,
+      annotations: READ,
+    },
+    (args) => result(listUsers(client, args, config.PRODUCTIVE_ADMIN_API_TOKEN))
+  );
 };

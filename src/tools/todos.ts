@@ -1,32 +1,33 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
+import { READ, WRITE, result, resolveMe, type RegisterTools } from './context.js';
 
 // ---- Schemas ----
 
-const listTodosSchema = z.object({
-  task_id: z.string().optional(),
+export const listTodosSchema = z.object({
+  task_id: z.string().optional().describe('Only todos of this task'),
   status: z.enum(['open', 'closed']).optional(),
-  limit: z.number().min(1).max(200).default(50).optional(),
+  limit: z.number().int().min(1).max(200).default(50).optional().describe('Max todos (1-200, default 50)'),
 });
 
-const getTodoSchema = z.object({
+export const getTodoSchema = z.object({
   todo_id: z.string().min(1, 'Todo ID is required'),
 });
 
-const createTodoSchema = z.object({
-  description: z.string().min(1, 'Description is required'),
-  task_id: z.string().optional(),
-  deal_id: z.string().optional(),
-  assignee_id: z.string().optional(),
-  due_date: z.string().optional(),
+export const createTodoSchema = z.object({
+  description: z.string().min(1, 'Description is required').describe('Text of the todo'),
+  task_id: z.string().optional().describe('Task to add the todo to'),
+  deal_id: z.string().optional().describe('Deal to add the todo to'),
+  assignee_id: z.string().optional().describe('Person ID to assign the todo to, or "me"'),
+  due_date: z.string().optional().describe('YYYY-MM-DD'),
 });
 
-const updateTodoSchema = z.object({
+export const updateTodoSchema = z.object({
   todo_id: z.string().min(1, 'Todo ID is required'),
-  description: z.string().optional(),
-  closed: z.boolean().optional(),
-  due_date: z.string().optional(),
+  description: z.string().optional().describe('New text of the todo'),
+  closed: z.boolean().optional().describe('true closes the todo, false reopens it'),
+  due_date: z.string().optional().describe('YYYY-MM-DD'),
 });
 
 const deleteTodoSchema = z.object({
@@ -256,116 +257,45 @@ export async function deleteTodoTool(
   }
 }
 
-// ---- Definitions ----
-
-export const listTodosDefinition = {
-  name: 'list_todos',
-  description: 'List todos from Productive.io, optionally filtered by task and status.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'Filter todos by task ID',
-      },
-      status: {
-        type: 'string',
-        enum: ['open', 'closed'],
-        description: 'Filter by status: "open" or "closed"',
-      },
-      limit: {
-        type: 'number',
-        description: 'Maximum number of todos to return (1-200, default 50)',
-      },
+export const registerTodoTools: RegisterTools = (server, { client, config }) => {
+  server.registerTool(
+    'list_todos',
+    {
+      title: 'List todos',
+      description: 'List todos (checklist items), optionally of one task and by status.',
+      inputSchema: listTodosSchema,
+      annotations: READ,
     },
-    required: [],
-  },
-};
-
-export const getTodoDefinition = {
-  name: 'get_todo',
-  description: 'Get a single todo by ID from Productive.io with all attributes.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      todo_id: {
-        type: 'string',
-        description: 'ID of the todo to retrieve (required)',
-      },
+    (args) => result(listTodosTool(client, args))
+  );
+  server.registerTool(
+    'get_todo',
+    {
+      title: 'Get todo',
+      description: 'Get a todo with its status, due date, task, deal and assignee.',
+      inputSchema: getTodoSchema,
+      annotations: READ,
     },
-    required: ['todo_id'],
-  },
-};
-
-export const createTodoDefinition = {
-  name: 'create_todo',
-  description: 'Create a new todo in Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      description: {
-        type: 'string',
-        description: 'Description of the todo (required)',
-      },
-      task_id: {
-        type: 'string',
-        description: 'ID of the task to associate the todo with',
-      },
-      deal_id: {
-        type: 'string',
-        description: 'ID of the deal to associate the todo with',
-      },
-      assignee_id: {
-        type: 'string',
-        description: 'ID of the person to assign the todo to',
-      },
-      due_date: {
-        type: 'string',
-        description: 'Due date in YYYY-MM-DD format',
-      },
+    (args) => result(getTodoTool(client, args))
+  );
+  server.registerTool(
+    'create_todo',
+    {
+      title: 'Create todo',
+      description: 'Create a todo on a task or deal.',
+      inputSchema: createTodoSchema,
+      annotations: WRITE,
     },
-    required: ['description'],
-  },
-};
-
-export const updateTodoDefinition = {
-  name: 'update_todo',
-  description: 'Update an existing todo in Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      todo_id: {
-        type: 'string',
-        description: 'ID of the todo to update (required)',
-      },
-      description: {
-        type: 'string',
-        description: 'Updated description for the todo',
-      },
-      closed: {
-        type: 'boolean',
-        description: 'Set to true to close the todo, false to reopen it',
-      },
-      due_date: {
-        type: 'string',
-        description: 'Updated due date in YYYY-MM-DD format',
-      },
+    (args) => result(createTodoTool(client, { ...args, assignee_id: args.assignee_id && resolveMe(args.assignee_id, config) }))
+  );
+  server.registerTool(
+    'update_todo',
+    {
+      title: 'Update todo',
+      description: 'Change a todo\'s text or due date, or close/reopen it.',
+      inputSchema: updateTodoSchema,
+      annotations: WRITE,
     },
-    required: ['todo_id'],
-  },
-};
-
-export const deleteTodoDefinition = {
-  name: 'delete_todo',
-  description: 'Delete a todo from Productive.io.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      todo_id: {
-        type: 'string',
-        description: 'ID of the todo to delete (required)',
-      },
-    },
-    required: ['todo_id'],
-  },
+    (args) => result(updateTodoTool(client, args))
+  );
 };

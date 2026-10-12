@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { ProductiveTaskList } from '../api/types.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 
 const addToBacklogSchema = z.object({
   task_id: z.string().describe('ID of the task to add to backlog'),
@@ -100,21 +100,3 @@ export async function addToBacklog(
   }
 }
 
-export const addToBacklogTool = {
-  name: 'add_to_backlog',
-  description: 'Add a task to the project backlog. Creates a Backlog task list if it doesn\'t exist.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'ID of the task to add to backlog'
-      },
-      project_id: {
-        type: 'string',
-        description: 'ID of the project containing the task'
-      }
-    },
-    required: ['task_id', 'project_id']
-  }
-};

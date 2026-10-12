@@ -9,20 +9,20 @@
     "lint:fix": "oxlint --fix",
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.5.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "agents": "^0.9.0",
-    "zod": "^4.3.6"
+    "@cloudflare/workers-oauth-provider": "1.2.3",
+    "@modelcontextprotocol/server": "2.3.1",
+    "zod": "4.6.6"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "oxfmt": "^0.43.0",
-    "oxlint": "^1.58.0",
-    "rolldown": "^1.0.0-rc.13",
-    "typescript": "6.0.2",
-    "wrangler": "^4.87.0"
+    "@types/bun": "1.4.3",
+    "@types/node": "26.6.5",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "typescript": "7.0.2",
+    "wrangler": "4.149.0"
   }
 }
