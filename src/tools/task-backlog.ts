@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { ProductiveTaskList } from '../api/types.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 
 const addToBacklogSchema = z.object({
   task_id: z.string().describe('ID of the task to add to backlog'),

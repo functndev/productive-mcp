@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 
 // Zod schema for timesheet prompt arguments
 const timesheetPromptSchema = z.object({

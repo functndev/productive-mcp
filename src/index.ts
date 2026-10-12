@@ -1,5 +1,5 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
-import { McpAgent } from "agents/mcp";
+import { createMcpHandler } from "@modelcontextprotocol/server";
 import { handleAccessRequest } from "./access-handler.js";
 import type { Props } from "./workers-oauth-utils.js";
 import { createMcpServer } from "./mcp.js";
@@ -10,65 +10,37 @@ import {
   handleAttachmentDownload,
 } from "./attachment-links.js";
 
-export class ProductiveMcp extends McpAgent<Env, unknown, Props> {
-  // Assigned in init(). Typed loosely to accommodate the low-level Server.
-  // biome-ignore lint/suspicious/noExplicitAny: agents SDK accepts Server | McpServer
-  server: any;
+/**
+ * The protected MCP endpoint. Stateless: every request builds a fresh McpServer for the
+ * authenticated user from the grant props, so nothing outlives the request.
+ */
+function handleMcpRequest(request: Request, env: Env, props: Props): Promise<Response> {
+  const config: Config = parseConfig({
+    // Per-user API token resolved from USER_MAPPING by the Access middleware.
+    PRODUCTIVE_API_TOKEN: props.productiveApiToken,
+    PRODUCTIVE_USER_ID: props.productiveUserId,
+    PRODUCTIVE_USER_EMAIL: props.email,
+    PRODUCTIVE_ORG_ID: (env as Env & { PRODUCTIVE_ORG_ID?: string }).PRODUCTIVE_ORG_ID,
+    PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
+    // Admin token resolved from any USER_MAPPING entry flagged isAdmin:true.
+    // Only used by tools that need elevated access (e.g. list_users).
+    PRODUCTIVE_ADMIN_API_TOKEN: props.adminApiToken,
+  });
 
-  async init() {
-    const env = this.env as Env & { PRODUCTIVE_ORG_ID?: string };
-    const config: Config = parseConfig({
-      // Per-user API token resolved from USER_MAPPING by the Access middleware.
-      PRODUCTIVE_API_TOKEN: this.props?.productiveApiToken,
-      PRODUCTIVE_USER_ID: this.props?.productiveUserId,
-      PRODUCTIVE_USER_EMAIL: this.props?.email,
-      PRODUCTIVE_ORG_ID: env.PRODUCTIVE_ORG_ID,
-      PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
-      // Admin token resolved from any USER_MAPPING entry flagged isAdmin:true.
-      // Only used by tools that need elevated access (e.g. list_users).
-      PRODUCTIVE_ADMIN_API_TOKEN: this.props?.adminApiToken,
-    });
+  // The Worker's hostname is not in the config, so use the one the client connected to;
+  // get_attachment builds download links from it.
+  const origin = new URL(request.url).origin;
+  const attachmentLinks = config.PRODUCTIVE_USER_ID
+    ? createAttachmentLinkSigner(origin, env.COOKIE_ENCRYPTION_KEY, config.PRODUCTIVE_USER_ID)
+    : undefined;
 
-    const origin = this.props?.origin;
-    const attachmentLinks =
-      origin && config.PRODUCTIVE_USER_ID
-        ? createAttachmentLinkSigner(origin, env.COOKIE_ENCRYPTION_KEY, config.PRODUCTIVE_USER_ID)
-        : undefined;
-
-    this.server = createMcpServer(config, attachmentLinks);
-  }
-
-  // The agents SDK bridges each POST /mcp to this DO over a WebSocket and
-  // closes it once the response is out, but its webSocketClose never answers
-  // the close frame. The stateless Worker invocation then waits on the
-  // half-closed socket until this DO hibernates; when that takes over 30 s
-  // the runtime cancels it and logs "waitUntil() tasks did not complete".
-  async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
-    try {
-      await super.webSocketClose(ws, code, reason, wasClean);
-    } finally {
-      try {
-        // 1005 and 1006 are reserved and must not be sent in a close frame.
-        ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
-      } catch {
-        // Already closed.
-      }
-    }
-  }
+  return createMcpHandler(() => createMcpServer(config, attachmentLinks)).fetch(request);
 }
-
-const mcpHandler = ProductiveMcp.serve("/mcp");
 
 export default new OAuthProvider({
   apiHandler: {
-    // The Worker's hostname is not in the config, so pass on the one the
-    // client connected to; get_attachment builds download links from it.
     fetch(request: Request, env: Env, ctx: ExecutionContext<Props>) {
-      (ctx as { props: Props }).props = {
-        ...ctx.props,
-        origin: new URL(request.url).origin,
-      };
-      return mcpHandler.fetch(request, env, ctx);
+      return handleMcpRequest(request, env, ctx.props);
     },
   } as never,
   apiRoute: "/mcp",

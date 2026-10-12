@@ -2,10 +2,6 @@
  * For more details on how to configure Wrangler, refer to:
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  */
-/**
- * For more details on how to configure Wrangler, refer to:
- * https://developers.cloudflare.com/workers/wrangler/configuration/
- */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "productive-mcp",
@@ -18,15 +14,12 @@
       "new_sqlite_classes": ["ProductiveMcp"],
       "tag": "v1",
     },
+    {
+      // The MCP endpoint is stateless now; the per-session Durable Object held no data.
+      "deleted_classes": ["ProductiveMcp"],
+      "tag": "v2",
+    },
   ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "class_name": "ProductiveMcp",
-        "name": "MCP_OBJECT",
-      },
-    ],
-  },
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",

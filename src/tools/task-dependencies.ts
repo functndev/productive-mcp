@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveIncludedResource } from '../api/types.js';
 
 function resolveTaskTitle(taskId: string | undefined, included?: ProductiveIncludedResource[]): string | undefined {
