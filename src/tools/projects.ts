@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '../errors.js';
+import { READ, result, type RegisterTools } from './context.js';
 
-const listProjectsSchema = z.object({
-  status: z.enum(['active', 'archived']).optional(),
-  company_id: z.string().optional(),
-  limit: z.number().min(1).max(200).default(30).optional(),
+export const listProjectsSchema = z.object({
+  status: z.enum(['active', 'archived']).optional().describe('Filter by project status'),
+  company_id: z.string().optional().describe('Only projects of this company'),
+  limit: z.number().int().min(1).max(200).default(30).optional().describe('Max projects (1-200)'),
 });
 
 export async function listProjectsTool(
@@ -61,28 +62,15 @@ export async function listProjectsTool(
   }
 }
 
-export const listProjectsDefinition = {
-  name: 'list_projects',
-  description: 'Get a list of projects',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      status: {
-        type: 'string',
-        enum: ['active', 'archived'],
-        description: 'Filter by project status',
-      },
-      company_id: {
-        type: 'string',
-        description: 'Filter projects by company ID',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of projects to return (1-200)',
-        minimum: 1,
-        maximum: 200,
-        default: 30,
-      },
+export const registerProjectTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_projects',
+    {
+      title: 'List projects',
+      description: 'List projects, optionally filtered by status or company.',
+      inputSchema: listProjectsSchema,
+      annotations: READ,
     },
-  },
+    (args) => result(listProjectsTool(client, args))
+  );
 };

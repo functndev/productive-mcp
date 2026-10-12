@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '../errors.js';
+import { READ, result, type RegisterTools } from './context.js';
 
-const listWorkflowStatusesSchema = z.object({
-  workflow_id: z.string().optional(),
-  category_id: z.number().int().min(1).max(3).optional(),
-  limit: z.number().min(1).max(200).default(50).optional(),
+export const listWorkflowStatusesSchema = z.object({
+  workflow_id: z.string().optional().describe('Only statuses of this workflow'),
+  category_id: z.number().int().min(1).max(3).optional().describe('1=Not Started, 2=Started, 3=Closed'),
+  limit: z.number().int().min(1).max(200).default(50).optional().describe('Max statuses (1-200)'),
 });
 
 export async function listWorkflowStatusesTool(
@@ -65,29 +66,15 @@ export async function listWorkflowStatusesTool(
   }
 }
 
-export const listWorkflowStatusesDefinition = {
-  name: 'list_workflow_statuses',
-  description: 'List workflow statuses available. These are used to set task status (Not Started=1, Started=2, Closed=3).',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      workflow_id: {
-        type: 'string',
-        description: 'Filter by workflow ID',
-      },
-      category_id: {
-        type: 'number',
-        description: 'Filter by category: 1=Not Started, 2=Started, 3=Closed',
-        minimum: 1,
-        maximum: 3,
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of statuses to return (1-200)',
-        minimum: 1,
-        maximum: 200,
-        default: 50,
-      },
+export const registerWorkflowStatusTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_workflow_statuses',
+    {
+      title: 'List workflow statuses',
+      description: 'List workflow statuses (the values a task status can take), with category: 1=Not Started, 2=Started, 3=Closed.',
+      inputSchema: listWorkflowStatusesSchema,
+      annotations: READ,
     },
-  },
+    (args) => result(listWorkflowStatusesTool(client, args))
+  );
 };

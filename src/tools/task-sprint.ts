@@ -118,37 +118,3 @@ export async function updateTaskSprint(
   }
 }
 
-export const updateTaskSprintTool = {
-  name: 'update_task_sprint',
-  description: 'Update the sprint(s) assigned to a task. Sprints are tracked using a custom field.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'ID of the task to update'
-      },
-      sprints: {
-        oneOf: [
-          {
-            type: 'string',
-            description: 'Single sprint number like "S03"'
-          },
-          {
-            type: 'array',
-            items: {
-              type: 'string'
-            },
-            description: 'Array of sprint numbers like ["S03", "S04"]'
-          },
-          {
-            type: 'null',
-            description: 'Use null to remove all sprints'
-          }
-        ],
-        description: 'Sprint number(s) like "S03" or ["S03", "S04"]. Use empty array [] or null to remove all sprints'
-      }
-    },
-    required: ['task_id', 'sprints']
-  }
-};

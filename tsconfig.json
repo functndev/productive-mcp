@@ -16,7 +16,8 @@
 		"skipLibCheck": true,
 		"types": [
 			"./worker-configuration.d.ts",
-			"node"
+			"node",
+			"bun"
 		]
 	},
 	"include": ["worker-configuration.d.ts", "src/**/*.ts"]

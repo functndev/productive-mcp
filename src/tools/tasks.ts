@@ -3,6 +3,13 @@ import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveTaskUpdate, ProductiveIncludedResource, ProductiveAttachment } from '../api/types.js';
 import { formatAttachmentList } from './attachments.js';
+import type { Config } from '../config/index.js';
+import { READ, WRITE, result, resolveMe, runSteps, type RegisterTools, type Step, type TextResult } from './context.js';
+import { updateTaskStatusTool } from './task-status.js';
+import { updateTaskSprint } from './task-sprint.js';
+import { moveTaskToList } from './task-list-move.js';
+import { addToBacklog } from './task-backlog.js';
+import { taskRepositionTool } from './task-reposition.js';
 
 function resolvePersonName(personId: string | undefined, included?: ProductiveIncludedResource[]): string | undefined {
   if (!personId || !included) return undefined;
@@ -20,19 +27,14 @@ function resolveWorkflowStatus(task: { relationships?: Record<string, any> }, in
   return status?.attributes?.name || undefined;
 }
 
-const listTasksSchema = z.object({
-  project_id: z.string().optional(),
-  assignee_id: z.string().optional(),
+export const listTasksSchema = z.object({
+  project_id: z.string().optional().describe('Only tasks of this project'),
+  assignee_id: z.string().optional().describe('Only tasks assigned to this person ("me" for the current user)'),
   status: z.enum(['open', 'closed']).optional(),
-  limit: z.number().min(1).max(200).default(30).optional(),
+  limit: z.number().int().min(1).max(200).optional().describe('Max tasks (default 200 with project_id, else 30)'),
 });
 
-const getProjectTasksSchema = z.object({
-  project_id: z.string().min(1, 'Project ID is required'),
-  status: z.enum(['open', 'closed']).optional(),
-});
-
-const getTaskSchema = z.object({
+export const getTaskSchema = z.object({
   task_id: z.string().min(1, 'Task ID is required'),
 });
 
@@ -45,9 +47,9 @@ export async function listTasksTool(
     
     const response = await client.listTasks({
       project_id: params.project_id,
-      assignee_id: params.assignee_id,
+      assignee_id: params.assignee_id && resolveMe(params.assignee_id, client.getConfig()),
       status: params.status,
-      limit: params.limit,
+      limit: params.limit ?? (params.project_id ? 200 : 30),
     });
     
     if (!response || !response.data || response.data.length === 0) {
@@ -78,67 +80,6 @@ export async function listTasksTool(
     }).join('\n\n');
 
     const summary = `Found ${response.data.length} task${response.data.length !== 1 ? 's' : ''}${response.meta?.total_count ? ` (showing ${response.data.length} of ${response.meta.total_count})` : ''}:\n\n${tasksText}`;
-    
-    return {
-      content: [{
-        type: 'text',
-        text: summary,
-      }],
-    };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      throw new McpError(
-        ErrorCode.InvalidParams,
-        `Invalid parameters: ${error.issues.map((e: z.ZodIssue) => e.message).join(', ')}`
-      );
-    }
-    
-    throw new McpError(
-      ErrorCode.InternalError,
-      error instanceof Error ? error.message : 'Unknown error occurred'
-    );
-  }
-}
-
-export async function getProjectTasksTool(
-  client: ProductiveAPIClient,
-  args: unknown
-): Promise<{ content: Array<{ type: string; text: string }> }> {
-  try {
-    const params = getProjectTasksSchema.parse(args);
-    
-    const response = await client.listTasks({
-      project_id: params.project_id,
-      status: params.status,
-      limit: 200, // Get maximum tasks for a project
-    });
-    
-    if (!response || !response.data || response.data.length === 0) {
-      return {
-        content: [{
-          type: 'text',
-          text: `No tasks found for project ${params.project_id}.`,
-        }],
-      };
-    }
-    
-    const tasksText = response.data.filter(task => task && task.attributes).map(task => {
-      const assigneeId = task.relationships?.assignee?.data?.id;
-      const assigneeName = resolvePersonName(assigneeId, response.included);
-      const workflowStatusName = resolveWorkflowStatus(task, response.included);
-      const fallbackStatus = task.attributes.status === 1 ? 'open' : task.attributes.status === 2 ? 'closed' : `status ${task.attributes.status}`;
-      const statusText = workflowStatusName || fallbackStatus;
-      const assigneeDisplay = assigneeName
-        ? `Assignee: ${assigneeName} (ID: ${assigneeId})`
-        : assigneeId ? `Assignee ID: ${assigneeId}` : 'Unassigned';
-      return `• ${task.attributes.title} (ID: ${task.id})
-  Status: ${statusText}
-  ${task.attributes.due_date ? `Due: ${task.attributes.due_date}` : 'No due date'}
-  ${assigneeDisplay}
-  ${task.attributes.description ? `Description: ${task.attributes.description}` : ''}`;
-    }).join('\n\n');
-
-    const summary = `Project ${params.project_id} has ${response.data.length} task${response.data.length !== 1 ? 's' : ''}:\n\n${tasksText}`;
     
     return {
       content: [{
@@ -314,80 +255,15 @@ export async function getTaskTool(
   }
 }
 
-export const listTasksDefinition = {
-  name: 'list_tasks',
-  description: 'Get a list of tasks',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'Filter tasks by project ID',
-      },
-      assignee_id: {
-        type: 'string',
-        description: 'Filter tasks by assignee ID',
-      },
-      status: {
-        type: 'string',
-        enum: ['open', 'closed'],
-        description: 'Filter by task status (open or closed)',
-      },
-      limit: {
-        type: 'number',
-        description: 'Number of tasks to return (1-200)',
-        minimum: 1,
-        maximum: 200,
-        default: 30,
-      },
-    },
-  },
-};
-
-export const getProjectTasksDefinition = {
-  name: 'get_project_tasks',
-  description: 'Get all tasks for a specific project. ALSO used as STEP 4 in timesheet workflow to find task_id for linking time entries to specific tasks. Workflow: list_projects → list_project_deals → list_deal_services → get_project_tasks → create_time_entry.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'The ID of the project',
-      },
-      status: {
-        type: 'string',
-        enum: ['open', 'closed'],
-        description: 'Filter by task status (open or closed)',
-      },
-    },
-    required: ['project_id'],
-  },
-};
-
-export const getTaskDefinition = {
-  name: 'get_task',
-  description: 'Get detailed information about a specific task by ID',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'The ID of the task to retrieve',
-      },
-    },
-    required: ['task_id'],
-  },
-};
-
-const createTaskSchema = z.object({
+export const createTaskSchema = z.object({
   title: z.string().min(1, 'Task title is required'),
-  description: z.string().optional(),
-  description_html: z.string().optional(),
+  description: z.string().optional().describe('Plain text'),
+  description_html: z.string().optional().describe('HTML (<h2>, <p>, <ul>, <li>, <strong>, <em>, <a href="">); wins over description'),
   project_id: z.string().optional(),
   board_id: z.string().optional(),
-  task_list_id: z.string().min(1, 'task_list_id is required by the Productive API'),
-  assignee_id: z.string().optional(),
-  due_date: z.string().optional(),
+  task_list_id: z.string().min(1, 'task_list_id is required by the Productive API').describe('Required; find one with list_task_lists'),
+  assignee_id: z.string().optional().describe('Person ID, or "me"'),
+  due_date: z.string().optional().describe('YYYY-MM-DD'),
   status: z.enum(['open', 'closed']).optional().default('open'),
 });
 
@@ -516,54 +392,6 @@ export async function createTaskTool(
   }
 }
 
-export const createTaskDefinition = {
-  name: 'create_task',
-  description: 'Create a new task. IMPORTANT: task_list_id is required by the Productive API — use list_task_lists (filter by board_id) or list_boards then list_task_lists to find one.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      title: {
-        type: 'string',
-        description: 'Task title',
-      },
-      description: {
-        type: 'string',
-        description: 'Task description (plain text)',
-      },
-      description_html: {
-        type: 'string',
-        description: 'Task description with HTML formatting. Supports tags like <h2>, <p>, <ul>, <li>, <strong>, <em>, <a href="">. Takes precedence over description if both provided.',
-      },
-      project_id: {
-        type: 'string',
-        description: 'ID of the project to add the task to',
-      },
-      board_id: {
-        type: 'string',
-        description: 'ID of the board to add the task to',
-      },
-      task_list_id: {
-        type: 'string',
-        description: 'ID of the task list to add the task to. Required by the Productive API — obtain via list_task_lists.',
-      },
-      assignee_id: {
-        type: 'string',
-        description: 'ID of the person to assign the task to. "me" for the current user.',
-      },
-      due_date: {
-        type: 'string',
-        description: 'Due date in YYYY-MM-DD format',
-      },
-      status: {
-        type: 'string',
-        enum: ['open', 'closed'],
-        description: 'Task status (default: open)',
-      },
-    },
-    required: ['title', 'task_list_id'],
-  },
-};
-
 const updateTaskAssignmentSchema = z.object({
   task_id: z.string().min(1, 'Task ID is required'),
   assignee_id: z.string().describe('ID of the person to assign (use "null" string to unassign)'),
@@ -644,25 +472,6 @@ export async function updateTaskAssignmentTool(
     );
   }
 }
-
-export const updateTaskAssignmentDefinition = {
-  name: 'update_task_assignment',
-  description: 'Update the assignee of an existing task. To unassign, use "null" as a string.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'ID of the task to update',
-      },
-      assignee_id: {
-        type: 'string',
-        description: 'ID of the person to assign the task to (use "null" string to unassign). "me" for the current user.',
-      },
-    },
-    required: ['task_id', 'assignee_id'],
-  },
-};
 
 const updateTaskDetailsSchema = z.object({
   task_id: z.string().min(1, 'Task ID is required'),
@@ -751,33 +560,6 @@ export async function updateTaskDetailsTool(
   }
 }
 
-export const updateTaskDetailsDefinition = {
-  name: 'update_task_details',
-  description: 'Update the title (name) and/or description of an existing task. At least one field must be provided.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'ID of the task to update',
-      },
-      title: {
-        type: 'string',
-        description: 'New title/name for the task (optional, but cannot be empty if provided)',
-      },
-      description: {
-        type: 'string',
-        description: 'New description for the task in plain text (optional, use empty string to clear description)',
-      },
-      description_html: {
-        type: 'string',
-        description: 'New description with HTML formatting. Supports tags like <h2>, <p>, <ul>, <li>, <strong>, <em>, <a href="">. Takes precedence over description if both provided.',
-      },
-    },
-    required: ['task_id'],
-  },
-};
-
 const deleteTaskSchema = z.object({
   task_id: z.string().min(1, 'Task ID is required'),
 });
@@ -812,17 +594,109 @@ export async function deleteTaskTool(
   }
 }
 
-export const deleteTaskDefinition = {
-  name: 'delete_task',
-  description: 'Delete a task by its ID',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'The ID of the task to delete',
-      },
+
+export const updateTaskSchema = z.object({
+  task_id: z.string().min(1, 'Task ID is required'),
+  title: z.string().min(1, 'Task title cannot be empty').optional(),
+  description: z.string().optional().describe('Plain text; "" clears it'),
+  description_html: z.string().optional().describe('HTML (<h2>, <p>, <ul>, <li>, <strong>, <em>, <a href="">); wins over description'),
+  status_name: z.string().optional().describe('Workflow status by name, e.g. "In Progress", "Done" (case-insensitive, partial match; lists the options if ambiguous)'),
+  workflow_status_id: z.string().optional().describe('Exact workflow status ID, instead of status_name'),
+  assignee_id: z.string().optional().describe('Person ID, "me", or "null" to unassign'),
+  sprints: z.union([z.string(), z.array(z.string())]).optional().describe('Sprint(s) like "S03" or ["S03", "S04"]; [] removes all'),
+  task_list_id: z.string().optional().describe('Move the task to this task list (same project)'),
+  to_backlog: z.boolean().optional().describe("Move the task to its project's Backlog task list (created if missing)"),
+  move_before_id: z.string().optional().describe('Reposition: place before this task'),
+  move_after_id: z.string().optional().describe('Reposition: place after this task'),
+  position: z.enum(['top', 'bottom']).optional().describe('Reposition: top or bottom of its task list'),
+});
+
+
+/**
+ * One tool for every change to an existing task. Each requested change runs the dedicated
+ * implementation (list move, details, status, assignee, sprints, position), in that order.
+ */
+async function updateTaskTool(client: ProductiveAPIClient, config: Config, args: z.infer<typeof updateTaskSchema>): Promise<TextResult> {
+  const { task_id } = args;
+  const steps: Step[] = [];
+
+  if (args.to_backlog && args.task_list_id) {
+    throw new McpError(ErrorCode.InvalidParams, 'Pass either task_list_id or to_backlog, not both');
+  }
+  if (args.to_backlog) {
+    steps.push(['move to backlog', async () => {
+      const task = await client.getTask(task_id);
+      const project_id = task.data.relationships?.project?.data?.id;
+      if (!project_id) throw new McpError(ErrorCode.InternalError, `Task ${task_id} has no project`);
+      return addToBacklog(client, { task_id, project_id });
+    }]);
+  }
+  if (args.task_list_id) {
+    steps.push(['move to task list', () => moveTaskToList(client, { task_id, task_list_id: args.task_list_id })]);
+  }
+  if (args.title !== undefined || args.description !== undefined || args.description_html !== undefined) {
+    steps.push(['details', () => updateTaskDetailsTool(client, { task_id, title: args.title, description: args.description, description_html: args.description_html })]);
+  }
+  if (args.status_name !== undefined || args.workflow_status_id !== undefined) {
+    steps.push(['status', () => updateTaskStatusTool(client, { task_id, status_name: args.status_name, workflow_status_id: args.workflow_status_id })]);
+  }
+  if (args.assignee_id !== undefined) {
+    steps.push(['assignee', () => updateTaskAssignmentTool(client, { task_id, assignee_id: args.assignee_id }, config)]);
+  }
+  if (args.sprints !== undefined) {
+    steps.push(['sprints', () => updateTaskSprint(client, { task_id, sprints: args.sprints })]);
+  }
+  if (args.move_before_id || args.move_after_id || args.position) {
+    steps.push(['position', () => taskRepositionTool(client, {
+      taskId: task_id,
+      move_before_id: args.move_before_id,
+      move_after_id: args.move_after_id,
+      moveToTop: args.position === 'top',
+      moveToBottom: args.position === 'bottom',
+    })]);
+  }
+  return runSteps(steps, 'Nothing to update: pass at least one field besides task_id');
+}
+
+export const registerTaskTools: RegisterTools = (server, { client, config }) => {
+  server.registerTool(
+    'list_tasks',
+    {
+      title: 'List tasks',
+      description: 'List tasks, filtered by project, assignee ("me" for your own tasks) and/or status.',
+      inputSchema: listTasksSchema,
+      annotations: READ,
     },
-    required: ['task_id'],
-  },
+    (args) => result(listTasksTool(client, args))
+  );
+  server.registerTool(
+    'get_task',
+    {
+      title: 'Get task',
+      description: 'Get a task with its description, status, assignee, dates, time worked and attachments.',
+      inputSchema: getTaskSchema,
+      annotations: READ,
+    },
+    (args) => result(getTaskTool(client, args))
+  );
+  server.registerTool(
+    'create_task',
+    {
+      title: 'Create task',
+      description: 'Create a task in a task list (find one with list_boards → list_task_lists).',
+      inputSchema: createTaskSchema,
+      annotations: WRITE,
+    },
+    (args) => result(createTaskTool(client, args, config))
+  );
+  server.registerTool(
+    'update_task',
+    {
+      title: 'Update task',
+      description: 'Change an existing task: title/description, status, assignee, sprints, task list (or backlog) and position. Pass only the fields to change.',
+      inputSchema: updateTaskSchema,
+      annotations: WRITE,
+    },
+    (args) => result(updateTaskTool(client, config, args))
+  );
 };

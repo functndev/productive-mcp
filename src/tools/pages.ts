@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import type { ProductivePage } from '../api/types.js';
 import { McpError, ErrorCode } from '../errors.js';
+import { READ, WRITE, result, runSteps, type RegisterTools, type Step, type TextResult } from './context.js';
 
 // ---- Schemas ----
 
@@ -14,25 +15,25 @@ function byPosition(a: ProductivePage, b: ProductivePage): number {
   return (a.attributes.position ?? Number.MAX_SAFE_INTEGER) - (b.attributes.position ?? Number.MAX_SAFE_INTEGER);
 }
 
-const listPagesSchema = z.object({
-  project_id: z.string().optional(),
-  parent_page_id: z.string().optional(),
-  root_page_id: z.string().optional(),
-  sort: z.enum(PAGE_SORT_OPTIONS).optional(),
-  limit: z.number().min(1).max(200).default(30).optional(),
+export const listPagesSchema = z.object({
+  project_id: z.string().optional().describe('Only pages of this project'),
+  parent_page_id: z.string().optional().describe('Only direct sub-pages of this page'),
+  root_page_id: z.string().optional().describe('All pages in the tree below this root page (any depth)'),
+  sort: z.enum(PAGE_SORT_OPTIONS).optional().describe('Prefix with "-" for descending (e.g. "-created_at" = newest first). "position" returns siblings in the order Productive shows them (top first); combine it with parent_page_id.'),
+  limit: z.number().int().min(1).max(200).default(30).optional().describe('Max pages (1-200, default 30)'),
 });
 
-const getPageSchema = z.object({
+export const getPageSchema = z.object({
   page_id: z.string().min(1, 'Page ID is required'),
 });
 
 // Productive only accepts a project on root pages; sub-pages inherit it from their root.
-const createPageSchema = z.object({
-  project_id: z.string().min(1).optional(),
+export const createPageSchema = z.object({
+  project_id: z.string().min(1).optional().describe('Required for root pages; omit for sub-pages, which inherit the project of their root page'),
   title: z.string().min(1, 'Title is required'),
-  body: z.string().optional(),
-  parent_page_id: z.number().optional().describe('ID of parent page (must also set root_page_id)'),
-  root_page_id: z.number().optional().describe('ID of root page in the hierarchy (must also set parent_page_id)'),
+  body: z.string().optional().describe('Markdown'),
+  parent_page_id: z.number().optional().describe('Parent page to nest this page under; set together with root_page_id'),
+  root_page_id: z.number().optional().describe('Top-level page of the hierarchy; set together with parent_page_id (for direct children of the root, both are the root page ID)'),
 })
   .refine(p => (p.parent_page_id == null) === (p.root_page_id == null), {
     message: 'parent_page_id and root_page_id must be set together',
@@ -41,7 +42,7 @@ const createPageSchema = z.object({
     message: 'project_id is required for a root page (no parent_page_id)',
   });
 
-const updatePageSchema = z.object({
+const updatePageDetailsSchema = z.object({
   page_id: z.string().min(1, 'Page ID is required'),
   title: z.string().optional(),
   body: z.string().optional(),
@@ -63,9 +64,9 @@ const movePageSchema = z.object({
   target_doc_id: z.string().min(1, 'Target document ID is required'),
 });
 
-const copyPageSchema = z.object({
-  template_id: z.string().min(1, 'Template ID (page to copy) is required'),
-  project_id: z.string().optional().describe('Project ID to copy the page into (defaults to same project)'),
+export const copyPageSchema = z.object({
+  template_id: z.string().min(1, 'Template ID (page to copy) is required').describe('ID of the page to copy'),
+  project_id: z.string().optional().describe('Project to copy the page into (default: same project)'),
 });
 
 // ---- Handlers ----
@@ -210,7 +211,7 @@ export async function createPageTool(
 
     const page = response.data;
 
-    // The body goes through the markdown endpoint for the same reason as in update_page.
+    // The body goes through the markdown endpoint for the same reason as in updatePageDetailsTool.
     if (params.body !== undefined) {
       try {
         await client.replacePageBodyWithMarkdown(page.id, params.body);
@@ -250,12 +251,12 @@ export async function createPageTool(
   }
 }
 
-export async function updatePageTool(
+async function updatePageDetailsTool(
   client: ProductiveAPIClient,
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
-    const params = updatePageSchema.parse(args);
+    const params = updatePageDetailsSchema.parse(args);
 
     const attributes: { title?: string; position?: number } = {};
     if (params.title !== undefined) attributes.title = params.title;
@@ -334,7 +335,7 @@ export async function deletePageTool(
   }
 }
 
-export async function movePageTool(
+async function movePageTool(
   client: ProductiveAPIClient,
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
@@ -367,7 +368,7 @@ export async function movePageTool(
  * Put the direct sub-pages of a page in the given order by writing contiguous positions (0 = top).
  * Children not named in page_ids keep their current relative order below the named ones.
  */
-export async function reorderPagesTool(
+async function reorderPagesTool(
   client: ProductiveAPIClient,
   args: unknown
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
@@ -459,184 +460,85 @@ export async function copyPageTool(
   }
 }
 
-// ---- Definitions ----
+export const updatePageSchema = z.object({
+  page_id: z.string().min(1, 'Page ID is required'),
+  title: z.string().optional(),
+  body: z.string().optional().describe('New body as Markdown. Replaces the whole body; anything Markdown can\'t express (mentions, banners, colours) is lost.'),
+  position: z.number().int().min(0).optional().describe('Display position among its siblings (0 = top); to order all siblings, use subpage_order on their parent'),
+  parent_page_id: z.string().min(1).optional().describe('Move the page under this page'),
+  subpage_order: z.array(z.string().min(1)).min(1).optional().describe('IDs of this page\'s direct sub-pages in the desired order, top first; sub-pages left out keep their relative order below them'),
+});
 
-export const listPagesDefinition = {
-  name: 'list_pages',
-  description: 'List pages/documents. Filter by project, by parent page (direct sub-pages) or by root page (the whole tree), and sort by various fields.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'Filter pages by project ID',
-      },
-      parent_page_id: {
-        type: 'string',
-        description: 'Only direct sub-pages of this page',
-      },
-      root_page_id: {
-        type: 'string',
-        description: 'All pages in the tree below this root page (any depth)',
-      },
-      sort: {
-        type: 'string',
-        enum: PAGE_SORT_OPTIONS,
-        description: 'Sort pages by a field; prefix with "-" for descending (e.g. "-created_at" for newest first). "position" returns siblings in the order Productive displays them (top first); combine it with parent_page_id.',
-      },
-      limit: {
-        type: 'number',
-        description: 'Maximum number of pages to return (1-200, default 30)',
-      },
-    },
-    required: [],
-  },
-};
 
-export const getPageDefinition = {
-  name: 'get_page',
-  description: 'Get a single page/document by ID, including full body content, creator, and project details.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      page_id: {
-        type: 'string',
-        description: 'ID of the page to retrieve',
-      },
-    },
-    required: ['page_id'],
-  },
-};
+/**
+ * One tool for every change to an existing page. Each requested change runs the dedicated
+ * implementation, in this order: move, title/body/position, sub-page order.
+ */
+async function updatePageTool(client: ProductiveAPIClient, args: z.infer<typeof updatePageSchema>): Promise<TextResult> {
+  const { page_id } = args;
+  const steps: Step[] = [];
 
-export const createPageDefinition = {
-  name: 'create_page',
-  description: 'Create a new page/document. The body is Markdown.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      project_id: {
-        type: 'string',
-        description: 'ID of the project to create the page in. Required for root pages; omit it for sub-pages, which inherit the project of their root page.',
-      },
-      title: {
-        type: 'string',
-        description: 'Title of the page',
-      },
-      body: {
-        type: 'string',
-        description: 'Body of the page as Markdown.',
-      },
-      parent_page_id: {
-        type: 'number',
-        description: 'ID of the parent page to nest this page under. Must be set together with root_page_id.',
-      },
-      root_page_id: {
-        type: 'number',
-        description: 'ID of the root (top-level) page in the hierarchy. Must be set together with parent_page_id. For direct children of root, set both to the root page ID.',
-      },
-    },
-    required: ['title'],
-  },
-};
+  if (args.parent_page_id !== undefined) {
+    steps.push(['move', () => movePageTool(client, { page_id, target_doc_id: args.parent_page_id })]);
+  }
+  if (args.title !== undefined || args.body !== undefined || args.position !== undefined) {
+    steps.push(['title/body/position', () => updatePageDetailsTool(client, { page_id, title: args.title, body: args.body, position: args.position })]);
+  }
+  if (args.subpage_order !== undefined) {
+    steps.push(['sub-page order', () => reorderPagesTool(client, { parent_page_id: page_id, page_ids: args.subpage_order })]);
+  }
+  return runSteps(steps, 'Nothing to update: pass at least one field besides page_id');
+}
 
-export const updatePageDefinition = {
-  name: 'update_page',
-  description: 'Update an existing page/document. Supports updating title and/or body.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      page_id: {
-        type: 'string',
-        description: 'ID of the page to update',
-      },
-      title: {
-        type: 'string',
-        description: 'New title for the page',
-      },
-      body: {
-        type: 'string',
-        description:
-          'New body for the page, as Markdown. Replaces the whole body; anything not expressible in ' +
-          'Markdown (mentions, banners, colours) is lost.',
-      },
-      position: {
-        type: 'number',
-        description: 'Display position among sibling pages (0 = top, ascending). To order a whole set of siblings, use reorder_pages.',
-      },
+export const registerPageTools: RegisterTools = (server, { client }) => {
+  server.registerTool(
+    'list_pages',
+    {
+      title: 'List pages',
+      description: 'List pages (docs) by project, parent page (direct sub-pages) or root page (whole tree).',
+      inputSchema: listPagesSchema,
+      annotations: READ,
     },
-    required: ['page_id'],
-  },
-};
-
-export const deletePageDefinition = {
-  name: 'delete_page',
-  description: 'Delete a page/document.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      page_id: {
-        type: 'string',
-        description: 'ID of the page to delete',
-      },
+    (args) => result(listPagesTool(client, args))
+  );
+  server.registerTool(
+    'get_page',
+    {
+      title: 'Get page',
+      description: 'Get a page (doc) with its full body, creator and project.',
+      inputSchema: getPageSchema,
+      annotations: READ,
     },
-    required: ['page_id'],
-  },
-};
-
-export const movePageDefinition = {
-  name: 'move_page',
-  description: 'Move a page/document under another page.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      page_id: {
-        type: 'string',
-        description: 'ID of the page to move',
-      },
-      target_doc_id: {
-        type: 'string',
-        description: 'ID of the parent page to move this page under',
-      },
+    (args) => result(getPageTool(client, args))
+  );
+  server.registerTool(
+    'create_page',
+    {
+      title: 'Create page',
+      description: 'Create a page (doc), as a root page in a project or as a sub-page. The body is Markdown.',
+      inputSchema: createPageSchema,
+      annotations: WRITE,
     },
-    required: ['page_id', 'target_doc_id'],
-  },
-};
-
-export const reorderPagesDefinition = {
-  name: 'reorder_pages',
-  description: 'Set the display order of the direct sub-pages of a page. Pass the sub-page IDs top first; sub-pages you leave out keep their current relative order below them. Only positions are written: nothing is moved, renamed or deleted.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      parent_page_id: {
-        type: 'string',
-        description: 'ID of the page whose sub-pages to reorder',
-      },
-      page_ids: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Sub-page IDs in the desired order, top first. Each must be a direct sub-page of parent_page_id.',
-      },
+    (args) => result(createPageTool(client, args))
+  );
+  server.registerTool(
+    'update_page',
+    {
+      title: 'Update page',
+      description: 'Change a page: title, Markdown body, position, move it under another page, or reorder its sub-pages. Pass only the fields to change.',
+      inputSchema: updatePageSchema,
+      annotations: WRITE,
     },
-    required: ['parent_page_id', 'page_ids'],
-  },
-};
-
-export const copyPageDefinition = {
-  name: 'copy_page',
-  description: 'Copy a page/document from a template.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      template_id: {
-        type: 'string',
-        description: 'ID of the page to use as a template for the copy',
-      },
-      project_id: {
-        type: 'string',
-        description: 'Project ID to copy the page into (optional, defaults to same project)',
-      },
+    (args) => result(updatePageTool(client, args))
+  );
+  server.registerTool(
+    'copy_page',
+    {
+      title: 'Copy page',
+      description: 'Copy a page (e.g. a template), optionally into another project.',
+      inputSchema: copyPageSchema,
+      annotations: WRITE,
     },
-    required: ['template_id'],
-  },
+    (args) => result(copyPageTool(client, args))
+  );
 };

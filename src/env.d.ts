@@ -24,3 +24,7 @@ declare namespace Cloudflare {
     COOKIE_ENCRYPTION_KEY: string;
   }
 }
+
+// Newer `wrangler types` declares the global `Env` apart from `Cloudflare.Env`; make it see the
+// secrets above too.
+interface Env extends Cloudflare.Env {}
