@@ -316,7 +316,7 @@ export async function getTaskTool(
 
 export const listTasksDefinition = {
   name: 'list_tasks',
-  description: 'Get a list of tasks from Productive.io',
+  description: 'Get a list of tasks',
   inputSchema: {
     type: 'object',
     properties: {
@@ -518,13 +518,13 @@ export async function createTaskTool(
 
 export const createTaskDefinition = {
   name: 'create_task',
-  description: 'Create a new task in Productive.io. IMPORTANT: task_list_id is required by the Productive API — use list_task_lists (filter by board_id) or list_boards then list_task_lists to find one. If PRODUCTIVE_USER_ID is configured, you can use "me" to refer to the configured user when assigning.',
+  description: 'Create a new task. IMPORTANT: task_list_id is required by the Productive API — use list_task_lists (filter by board_id) or list_boards then list_task_lists to find one.',
   inputSchema: {
     type: 'object',
     properties: {
       title: {
         type: 'string',
-        description: 'Task title (required)',
+        description: 'Task title',
       },
       description: {
         type: 'string',
@@ -548,7 +548,7 @@ export const createTaskDefinition = {
       },
       assignee_id: {
         type: 'string',
-        description: 'ID of the person to assign the task to. If PRODUCTIVE_USER_ID is configured in environment, "me" refers to that user.',
+        description: 'ID of the person to assign the task to. "me" for the current user.',
       },
       due_date: {
         type: 'string',
@@ -647,17 +647,17 @@ export async function updateTaskAssignmentTool(
 
 export const updateTaskAssignmentDefinition = {
   name: 'update_task_assignment',
-  description: 'Update the assignee of an existing task. If PRODUCTIVE_USER_ID is configured, you can use "me" to refer to the configured user. To unassign, use "null" as a string.',
+  description: 'Update the assignee of an existing task. To unassign, use "null" as a string.',
   inputSchema: {
     type: 'object',
     properties: {
       task_id: {
         type: 'string',
-        description: 'ID of the task to update (required)',
+        description: 'ID of the task to update',
       },
       assignee_id: {
         type: 'string',
-        description: 'ID of the person to assign the task to (use "null" string to unassign). If PRODUCTIVE_USER_ID is configured in environment, "me" refers to that user.',
+        description: 'ID of the person to assign the task to (use "null" string to unassign). "me" for the current user.',
       },
     },
     required: ['task_id', 'assignee_id'],
@@ -759,7 +759,7 @@ export const updateTaskDetailsDefinition = {
     properties: {
       task_id: {
         type: 'string',
-        description: 'ID of the task to update (required)',
+        description: 'ID of the task to update',
       },
       title: {
         type: 'string',
@@ -814,13 +814,13 @@ export async function deleteTaskTool(
 
 export const deleteTaskDefinition = {
   name: 'delete_task',
-  description: 'Delete a task from Productive.io by its ID',
+  description: 'Delete a task by its ID',
   inputSchema: {
     type: 'object',
     properties: {
       task_id: {
         type: 'string',
-        description: 'The ID of the task to delete (required)',
+        description: 'The ID of the task to delete',
       },
     },
     required: ['task_id'],

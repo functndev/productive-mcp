@@ -100,17 +100,17 @@ export async function addTaskCommentTool(
 
 export const addTaskCommentDefinition = {
   name: 'add_task_comment',
-  description: 'Add a comment to a task in Productive.io. Supports HTML formatting.',
+  description: 'Add a comment to a task. Supports HTML formatting.',
   inputSchema: {
     type: 'object',
     properties: {
       task_id: {
         type: 'string',
-        description: 'ID of the task to add the comment to (required)',
+        description: 'ID of the task to add the comment to',
       },
       comment: {
         type: 'string',
-        description: 'Comment content (required). Supports HTML formatting with tags like <div>, <p>, <strong>, <em>, <ul>, <li>, <a href="">.',
+        description: 'Comment content. Supports HTML formatting with tags like <div>, <p>, <strong>, <em>, <ul>, <li>, <a href="">.',
       },
     },
     required: ['task_id', 'comment'],
@@ -178,7 +178,7 @@ export async function listCommentsTool(
 
 export const listCommentsDefinition = {
   name: 'list_comments',
-  description: 'List comments in Productive.io, optionally filtered by task or project.',
+  description: 'List comments, optionally filtered by task or project.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -259,13 +259,13 @@ export async function getCommentTool(
 
 export const getCommentDefinition = {
   name: 'get_comment',
-  description: 'Get a single comment by ID from Productive.io with all attributes.',
+  description: 'Get a single comment by ID with all attributes.',
   inputSchema: {
     type: 'object',
     properties: {
       comment_id: {
         type: 'string',
-        description: 'The ID of the comment to retrieve (required)',
+        description: 'The ID of the comment to retrieve',
       },
     },
     required: ['comment_id'],
@@ -319,17 +319,17 @@ export async function updateCommentTool(
 
 export const updateCommentDefinition = {
   name: 'update_comment',
-  description: 'Update the body of an existing comment in Productive.io.',
+  description: 'Update the body of an existing comment.',
   inputSchema: {
     type: 'object',
     properties: {
       comment_id: {
         type: 'string',
-        description: 'The ID of the comment to update (required)',
+        description: 'The ID of the comment to update',
       },
       body: {
         type: 'string',
-        description: 'The new comment body content (required). Supports HTML formatting.',
+        description: 'The new comment body content. Supports HTML formatting.',
       },
     },
     required: ['comment_id', 'body'],
@@ -374,13 +374,13 @@ export async function deleteCommentTool(
 
 export const deleteCommentDefinition = {
   name: 'delete_comment',
-  description: 'Delete a comment by ID from Productive.io.',
+  description: 'Delete a comment by ID.',
   inputSchema: {
     type: 'object',
     properties: {
       comment_id: {
         type: 'string',
-        description: 'The ID of the comment to delete (required)',
+        description: 'The ID of the comment to delete',
       },
     },
     required: ['comment_id'],
@@ -425,13 +425,13 @@ export async function pinCommentTool(
 
 export const pinCommentDefinition = {
   name: 'pin_comment',
-  description: 'Pin a comment in Productive.io so it appears prominently.',
+  description: 'Pin a comment so it appears prominently.',
   inputSchema: {
     type: 'object',
     properties: {
       comment_id: {
         type: 'string',
-        description: 'The ID of the comment to pin (required)',
+        description: 'The ID of the comment to pin',
       },
     },
     required: ['comment_id'],
@@ -476,13 +476,13 @@ export async function unpinCommentTool(
 
 export const unpinCommentDefinition = {
   name: 'unpin_comment',
-  description: 'Unpin a previously pinned comment in Productive.io.',
+  description: 'Unpin a previously pinned comment.',
   inputSchema: {
     type: 'object',
     properties: {
       comment_id: {
         type: 'string',
-        description: 'The ID of the comment to unpin (required)',
+        description: 'The ID of the comment to unpin',
       },
     },
     required: ['comment_id'],
@@ -528,17 +528,17 @@ export async function addCommentReactionTool(
 
 export const addCommentReactionDefinition = {
   name: 'add_comment_reaction',
-  description: 'Add a reaction (e.g. "like") to a comment in Productive.io.',
+  description: 'Add a reaction (e.g. "like") to a comment.',
   inputSchema: {
     type: 'object',
     properties: {
       comment_id: {
         type: 'string',
-        description: 'The ID of the comment to react to (required)',
+        description: 'The ID of the comment to react to',
       },
       reaction: {
         type: 'string',
-        description: 'The reaction to add (e.g. "like", "heart", "thumbsup") (required)',
+        description: 'The reaction to add (e.g. "like", "heart", "thumbsup")',
       },
     },
     required: ['comment_id', 'reaction'],

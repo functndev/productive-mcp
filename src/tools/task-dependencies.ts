@@ -210,7 +210,7 @@ export const getTaskDependencyDefinition = {
     properties: {
       dependency_id: {
         type: 'string',
-        description: 'ID of the task dependency to retrieve (required)',
+        description: 'ID of the task dependency to retrieve',
       },
     },
     required: ['dependency_id'],
@@ -249,7 +249,7 @@ export const deleteTaskDependencyDefinition = {
     properties: {
       dependency_id: {
         type: 'string',
-        description: 'ID of the task dependency to delete (required)',
+        description: 'ID of the task dependency to delete',
       },
     },
     required: ['dependency_id'],

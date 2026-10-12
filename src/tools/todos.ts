@@ -260,7 +260,7 @@ export async function deleteTodoTool(
 
 export const listTodosDefinition = {
   name: 'list_todos',
-  description: 'List todos from Productive.io, optionally filtered by task and status.',
+  description: 'List todos, optionally filtered by task and status.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -284,13 +284,13 @@ export const listTodosDefinition = {
 
 export const getTodoDefinition = {
   name: 'get_todo',
-  description: 'Get a single todo by ID from Productive.io with all attributes.',
+  description: 'Get a single todo by ID with all attributes.',
   inputSchema: {
     type: 'object',
     properties: {
       todo_id: {
         type: 'string',
-        description: 'ID of the todo to retrieve (required)',
+        description: 'ID of the todo to retrieve',
       },
     },
     required: ['todo_id'],
@@ -299,13 +299,13 @@ export const getTodoDefinition = {
 
 export const createTodoDefinition = {
   name: 'create_todo',
-  description: 'Create a new todo in Productive.io.',
+  description: 'Create a new todo.',
   inputSchema: {
     type: 'object',
     properties: {
       description: {
         type: 'string',
-        description: 'Description of the todo (required)',
+        description: 'Description of the todo',
       },
       task_id: {
         type: 'string',
@@ -330,13 +330,13 @@ export const createTodoDefinition = {
 
 export const updateTodoDefinition = {
   name: 'update_todo',
-  description: 'Update an existing todo in Productive.io.',
+  description: 'Update an existing todo.',
   inputSchema: {
     type: 'object',
     properties: {
       todo_id: {
         type: 'string',
-        description: 'ID of the todo to update (required)',
+        description: 'ID of the todo to update',
       },
       description: {
         type: 'string',
@@ -357,13 +357,13 @@ export const updateTodoDefinition = {
 
 export const deleteTodoDefinition = {
   name: 'delete_todo',
-  description: 'Delete a todo from Productive.io.',
+  description: 'Delete a todo.',
   inputSchema: {
     type: 'object',
     properties: {
       todo_id: {
         type: 'string',
-        description: 'ID of the todo to delete (required)',
+        description: 'ID of the todo to delete',
       },
     },
     required: ['todo_id'],

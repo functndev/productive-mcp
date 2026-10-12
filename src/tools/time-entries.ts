@@ -78,7 +78,7 @@ const createTimeEntrySchema = z.object({
   person_id: z.string().min(1, 'Person ID is required'),
   service_id: z.string().min(1, 'Service ID is required'),
   task_id: z.string().optional().describe('Optional task ID - use list_project_tasks to find available tasks for the project'),
-  note: z.string().min(10, 'Work description must be at least 10 characters').describe('REQUIRED: Detailed description of work performed - be specific about what was accomplished, including bullet points if multiple items'),
+  note: z.string().min(10, 'Work description must be at least 10 characters').describe('Detailed description of work performed - be specific about what was accomplished, including bullet points if multiple items'),
   billable_time: z.string().optional(),
   confirm: z.boolean().optional().default(false),
 });
@@ -496,7 +496,7 @@ export async function getProjectServicesTool(
 
 export const listTimeEntriesDefinition = {
   name: 'list_time_entries',
-  description: 'View existing time entries from Productive.io with detailed information including service and budget relationships. Use this to see what time has been logged and to which projects/services. If PRODUCTIVE_USER_ID is configured, you can use "me" to refer to the configured user for person_id.',
+  description: 'View existing time entries with detailed information including service and budget relationships.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -514,7 +514,7 @@ export const listTimeEntriesDefinition = {
       },
       person_id: {
         type: 'string',
-        description: 'Filter by person ID. If PRODUCTIVE_USER_ID is configured in environment, "me" refers to that user.',
+        description: 'Filter by person ID. "me" for the current user.',
       },
       project_id: {
         type: 'string',
@@ -542,38 +542,38 @@ export const listTimeEntriesDefinition = {
 
 export const createTimeEntryDefinition = {
   name: 'create_time_entry',
-  description: 'STEP 5 (FINAL) of timesheet workflow: Create a time entry with detailed work description. COMPLETE WORKFLOW: 1) list_projects → 2) list_project_deals → 3) list_deal_services → 4) list_project_tasks (recommended) → 5) create_time_entry. You MUST provide: valid service_id from the hierarchy, detailed work notes (minimum 10 chars), and optionally link to a specific task_id. This tool requires confirmation before creating. If PRODUCTIVE_USER_ID is configured, use "me" for person_id.',
+  description: 'Log time. Find service_id via list_projects → list_project_deals → list_deal_services; optionally link a task (get_project_tasks). Call without confirm first to preview.',
   inputSchema: {
     type: 'object',
     properties: {
       date: {
         type: 'string',
-        description: 'Date for the time entry. Accepts "today", "yesterday", or YYYY-MM-DD format (required)',
+        description: 'Date for the time entry. Accepts "today", "yesterday", or YYYY-MM-DD format',
       },
       time: {
         type: 'string',
-        description: 'Time duration. Accepts formats like "2h", "120m", "2.5h", or "2.5" (assumed hours) (required)',
+        description: 'Time duration. Accepts formats like "2h", "120m", "2.5h", or "2.5" (assumed hours)',
       },
       person_id: {
         type: 'string',
-        description: 'ID of the person logging time. If PRODUCTIVE_USER_ID is configured in environment, "me" refers to that user. (required)',
+        description: 'ID of the person logging time. "me" for the current user.',
       },
       service_id: {
         type: 'string',
-        description: 'ID of the service being performed (required)',
+        description: 'ID of the service being performed',
       },
       task_id: {
         type: 'string',
-        description: 'ID of the task being worked on (recommended - use list_project_tasks to find available tasks)',
+        description: 'ID of the task being worked on (recommended; see get_project_tasks)',
       },
       note: {
         type: 'string',
-        description: 'REQUIRED: Detailed description of work performed - be specific about what was accomplished, include bullet points if multiple items (minimum 10 characters)',
+        description: 'Detailed description of work performed - be specific about what was accomplished, include bullet points if multiple items (minimum 10 characters)',
         minLength: 10,
       },
       billable_time: {
         type: 'string',
-        description: 'Billable time duration, same format as time field. If not specified, defaults to the time value (optional)',
+        description: 'Billable time duration, same format as time field. If not specified, defaults to the time value',
       },
       confirm: {
         type: 'boolean',
@@ -737,7 +737,7 @@ export const listProjectDealsDefinition = {
     properties: {
       project_id: {
         type: 'string',
-        description: 'The ID of the project (required)',
+        description: 'The ID of the project',
       },
       budget_type: {
         type: 'number',
@@ -765,7 +765,7 @@ export const listDealServicesDefinition = {
     properties: {
       deal_id: {
         type: 'string',
-        description: 'The ID of the deal/budget (required)',
+        description: 'The ID of the deal/budget',
       },
       limit: {
         type: 'number',

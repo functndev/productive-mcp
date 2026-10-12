@@ -132,7 +132,7 @@ export const listDealsDefinition = {
     properties: {
       since: {
         type: 'string',
-        description: 'YYYY-MM-DD (required). Deals with activity on/after this date (or created, with created_only)',
+        description: 'YYYY-MM-DD. Deals with activity on/after this date (or created, with created_only)',
       },
       created_only: {
         type: 'boolean',

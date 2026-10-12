@@ -37,16 +37,13 @@ export function createMcpServer(config: Config, attachmentLinks?: AttachmentLink
   const hasConfiguredUser = !!config.PRODUCTIVE_USER_ID;
   
   const server = new Server(
-    {
-      name: 'productive-mcp',
-      version: '1.0.0',
-      description: `MCP server for Productive.io API integration. Productive has a hierarchical structure: Customers → Projects → Boards → Task Lists → Tasks.${hasConfiguredUser ? ` IMPORTANT: When users say "me" or "assign to me", use "me" as the assignee_id value - it automatically resolves to the configured user ID ${config.PRODUCTIVE_USER_ID}.` : ' No user configured - set PRODUCTIVE_USER_ID to enable "me" context.'} Use the 'whoami' tool to check current user context.`,
-    },
+    { name: 'productive-mcp', version: '1.0.0' },
     {
       capabilities: {
         tools: {},
         prompts: {},
       },
+      instructions: `Productive.io: Customers → Projects → Boards → Task Lists → Tasks.${hasConfiguredUser ? ` The signed-in user ("me") has person ID ${config.PRODUCTIVE_USER_ID}.` : ''}`,
     }
   );
   const apiClient = new ProductiveAPIClient(config);
@@ -372,12 +369,15 @@ export function createMcpServer(config: Config, attachmentLinks?: AttachmentLink
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(JSON.stringify({
-        event: 'tool_call_error',
+      // console.log, not console.error: tool calls run inside the MCP stream, and the logging
+      // tail worker drops error-level lines of stream invocations the client disconnected.
+      console.log(JSON.stringify({
+        event: 'tool_call',
         tool: name,
         userId: config.PRODUCTIVE_USER_ID,
         userEmail: config.PRODUCTIVE_USER_EMAIL,
         durationMs: Date.now() - startedAt,
+        outcome: 'error',
         error: message,
         args: args ?? null,
       }));

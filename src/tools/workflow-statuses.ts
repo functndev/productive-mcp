@@ -67,7 +67,7 @@ export async function listWorkflowStatusesTool(
 
 export const listWorkflowStatusesDefinition = {
   name: 'list_workflow_statuses',
-  description: 'List workflow statuses available in Productive.io. These are used to set task status (Not Started=1, Started=2, Closed=3).',
+  description: 'List workflow statuses available. These are used to set task status (Not Started=1, Started=2, Closed=3).',
   inputSchema: {
     type: 'object',
     properties: {

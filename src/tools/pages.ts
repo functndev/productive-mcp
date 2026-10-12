@@ -463,7 +463,7 @@ export async function copyPageTool(
 
 export const listPagesDefinition = {
   name: 'list_pages',
-  description: 'List pages/documents from Productive.io. Filter by project, by parent page (direct sub-pages) or by root page (the whole tree), and sort by various fields.',
+  description: 'List pages/documents. Filter by project, by parent page (direct sub-pages) or by root page (the whole tree), and sort by various fields.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -495,13 +495,13 @@ export const listPagesDefinition = {
 
 export const getPageDefinition = {
   name: 'get_page',
-  description: 'Get a single page/document from Productive.io by ID, including full body content, creator, and project details.',
+  description: 'Get a single page/document by ID, including full body content, creator, and project details.',
   inputSchema: {
     type: 'object',
     properties: {
       page_id: {
         type: 'string',
-        description: 'ID of the page to retrieve (required)',
+        description: 'ID of the page to retrieve',
       },
     },
     required: ['page_id'],
@@ -510,7 +510,7 @@ export const getPageDefinition = {
 
 export const createPageDefinition = {
   name: 'create_page',
-  description: 'Create a new page/document in Productive.io. The body is Markdown.',
+  description: 'Create a new page/document. The body is Markdown.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -520,11 +520,11 @@ export const createPageDefinition = {
       },
       title: {
         type: 'string',
-        description: 'Title of the page (required)',
+        description: 'Title of the page',
       },
       body: {
         type: 'string',
-        description: 'Body of the page as Markdown (optional).',
+        description: 'Body of the page as Markdown.',
       },
       parent_page_id: {
         type: 'number',
@@ -541,13 +541,13 @@ export const createPageDefinition = {
 
 export const updatePageDefinition = {
   name: 'update_page',
-  description: 'Update an existing page/document in Productive.io. Supports updating title and/or body.',
+  description: 'Update an existing page/document. Supports updating title and/or body.',
   inputSchema: {
     type: 'object',
     properties: {
       page_id: {
         type: 'string',
-        description: 'ID of the page to update (required)',
+        description: 'ID of the page to update',
       },
       title: {
         type: 'string',
@@ -570,13 +570,13 @@ export const updatePageDefinition = {
 
 export const deletePageDefinition = {
   name: 'delete_page',
-  description: 'Delete a page/document from Productive.io.',
+  description: 'Delete a page/document.',
   inputSchema: {
     type: 'object',
     properties: {
       page_id: {
         type: 'string',
-        description: 'ID of the page to delete (required)',
+        description: 'ID of the page to delete',
       },
     },
     required: ['page_id'],
@@ -585,17 +585,17 @@ export const deletePageDefinition = {
 
 export const movePageDefinition = {
   name: 'move_page',
-  description: 'Move a page/document under another page in Productive.io.',
+  description: 'Move a page/document under another page.',
   inputSchema: {
     type: 'object',
     properties: {
       page_id: {
         type: 'string',
-        description: 'ID of the page to move (required)',
+        description: 'ID of the page to move',
       },
       target_doc_id: {
         type: 'string',
-        description: 'ID of the parent page to move this page under (required)',
+        description: 'ID of the parent page to move this page under',
       },
     },
     required: ['page_id', 'target_doc_id'],
@@ -604,18 +604,18 @@ export const movePageDefinition = {
 
 export const reorderPagesDefinition = {
   name: 'reorder_pages',
-  description: 'Set the display order of the direct sub-pages of a page in Productive.io. Pass the sub-page IDs top first; sub-pages you leave out keep their current relative order below them. Only positions are written: nothing is moved, renamed or deleted.',
+  description: 'Set the display order of the direct sub-pages of a page. Pass the sub-page IDs top first; sub-pages you leave out keep their current relative order below them. Only positions are written: nothing is moved, renamed or deleted.',
   inputSchema: {
     type: 'object',
     properties: {
       parent_page_id: {
         type: 'string',
-        description: 'ID of the page whose sub-pages to reorder (required)',
+        description: 'ID of the page whose sub-pages to reorder',
       },
       page_ids: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Sub-page IDs in the desired order, top first (required). Each must be a direct sub-page of parent_page_id.',
+        description: 'Sub-page IDs in the desired order, top first. Each must be a direct sub-page of parent_page_id.',
       },
     },
     required: ['parent_page_id', 'page_ids'],
@@ -624,13 +624,13 @@ export const reorderPagesDefinition = {
 
 export const copyPageDefinition = {
   name: 'copy_page',
-  description: 'Copy a page/document from a template in Productive.io.',
+  description: 'Copy a page/document from a template.',
   inputSchema: {
     type: 'object',
     properties: {
       template_id: {
         type: 'string',
-        description: 'ID of the page to use as a template for the copy (required)',
+        description: 'ID of the page to use as a template for the copy',
       },
       project_id: {
         type: 'string',

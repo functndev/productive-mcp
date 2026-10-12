@@ -110,13 +110,13 @@ export async function listSubtasksTool(
 
 export const listSubtasksDefinition = {
   name: 'list_subtasks',
-  description: 'List subtasks of a parent task in Productive.io',
+  description: 'List subtasks of a parent task',
   inputSchema: {
     type: 'object',
     properties: {
       parent_task_id: {
         type: 'string',
-        description: 'The ID of the parent task (required)',
+        description: 'The ID of the parent task',
       },
       limit: {
         type: 'number',
@@ -240,17 +240,17 @@ export async function createSubtaskTool(
 
 export const createSubtaskDefinition = {
   name: 'create_subtask',
-  description: 'Create a subtask under a parent task in Productive.io',
+  description: 'Create a subtask under a parent task',
   inputSchema: {
     type: 'object',
     properties: {
       parent_task_id: {
         type: 'string',
-        description: 'The ID of the parent task (required)',
+        description: 'The ID of the parent task',
       },
       title: {
         type: 'string',
-        description: 'Subtask title (required)',
+        description: 'Subtask title',
       },
       description: {
         type: 'string',

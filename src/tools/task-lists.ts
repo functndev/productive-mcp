@@ -73,7 +73,7 @@ export async function listTaskLists(
 
 export const listTaskListsTool = {
   name: 'list_task_lists',
-  description: 'Get a list of task lists from Productive.io. Task lists organize tasks within boards.',
+  description: 'Get a list of task lists. Task lists organize tasks within boards.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -166,7 +166,7 @@ export async function createTaskList(
 
 export const createTaskListTool = {
   name: 'create_task_list',
-  description: 'Create a new task list in a Productive.io board. Task lists help organize tasks within boards.',
+  description: 'Create a new task list in a board. Task lists help organize tasks within boards.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -251,7 +251,7 @@ export async function getTaskList(
 
 export const getTaskListTool = {
   name: 'get_task_list',
-  description: 'Get a single task list by ID from Productive.io.',
+  description: 'Get a single task list by ID.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -329,7 +329,7 @@ export async function updateTaskList(
 
 export const updateTaskListTool = {
   name: 'update_task_list',
-  description: 'Update an existing task list in Productive.io.',
+  description: 'Update an existing task list.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -393,7 +393,7 @@ export async function archiveTaskList(
 
 export const archiveTaskListTool = {
   name: 'archive_task_list',
-  description: 'Archive a task list in Productive.io.',
+  description: 'Archive a task list.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -453,7 +453,7 @@ export async function restoreTaskList(
 
 export const restoreTaskListTool = {
   name: 'restore_task_list',
-  description: 'Restore a previously archived task list in Productive.io.',
+  description: 'Restore a previously archived task list.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -533,7 +533,7 @@ export async function copyTaskList(
 
 export const copyTaskListTool = {
   name: 'copy_task_list',
-  description: 'Copy a task list from a template in Productive.io.',
+  description: 'Copy a task list from a template.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -614,7 +614,7 @@ export async function moveTaskList(
 
 export const moveTaskListTool = {
   name: 'move_task_list',
-  description: 'Move a task list to a different board in Productive.io.',
+  description: 'Move a task list to a different board.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -679,7 +679,7 @@ export async function repositionTaskList(
 
 export const repositionTaskListTool = {
   name: 'reposition_task_list',
-  description: 'Reposition a task list before another task list in Productive.io.',
+  description: 'Reposition a task list before another task list.',
   inputSchema: {
     type: 'object',
     properties: {

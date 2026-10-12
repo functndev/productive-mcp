@@ -77,7 +77,7 @@ export async function listFolders(
 
 export const listFoldersTool = {
   name: 'list_folders',
-  description: 'Get a list of folders from Productive.io',
+  description: 'Get a list of folders',
   inputSchema: {
     type: 'object',
     properties: {
@@ -164,7 +164,7 @@ export async function getFolder(
 
 export const getFolderTool = {
   name: 'get_folder',
-  description: 'Get details of a specific folder from Productive.io',
+  description: 'Get details of a specific folder',
   inputSchema: {
     type: 'object',
     properties: {
@@ -247,7 +247,7 @@ export async function createFolder(
 
 export const createFolderTool = {
   name: 'create_folder',
-  description: 'Create a new folder in a Productive.io project',
+  description: 'Create a new folder in a project',
   inputSchema: {
     type: 'object',
     properties: {
@@ -326,7 +326,7 @@ export async function updateFolder(
 
 export const updateFolderTool = {
   name: 'update_folder',
-  description: 'Update an existing folder in Productive.io',
+  description: 'Update an existing folder',
   inputSchema: {
     type: 'object',
     properties: {
@@ -388,7 +388,7 @@ export async function archiveFolder(
 
 export const archiveFolderTool = {
   name: 'archive_folder',
-  description: 'Archive a folder in Productive.io',
+  description: 'Archive a folder',
   inputSchema: {
     type: 'object',
     properties: {
@@ -446,7 +446,7 @@ export async function restoreFolder(
 
 export const restoreFolderTool = {
   name: 'restore_folder',
-  description: 'Restore an archived folder in Productive.io',
+  description: 'Restore an archived folder',
   inputSchema: {
     type: 'object',
     properties: {

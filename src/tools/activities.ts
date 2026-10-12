@@ -112,7 +112,7 @@ export async function listActivities(
 
 export const listActivitiesTool = {
   name: 'list_activities',
-  description: 'List activities (changes/updates) from Productive.io with filtering options for tracking recent work',
+  description: 'List activities (changes/updates) with filtering options for tracking recent work',
   inputSchema: {
     type: 'object',
     properties: {

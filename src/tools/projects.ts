@@ -63,7 +63,7 @@ export async function listProjectsTool(
 
 export const listProjectsDefinition = {
   name: 'list_projects',
-  description: 'Get a list of projects from Productive.io',
+  description: 'Get a list of projects',
   inputSchema: {
     type: 'object',
     properties: {

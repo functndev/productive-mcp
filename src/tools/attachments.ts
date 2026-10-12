@@ -166,7 +166,7 @@ export async function listAttachmentsTool(
 export const listAttachmentsDefinition = {
   name: 'list_attachments',
   description:
-    'List the files attached to a task, comment, page or project in Productive.io (screenshots, PDFs, logs). Returns each attachment ID, filename, MIME type and size. Use get_attachment to actually read an attachment. Note that images embedded in a task description are attachments too, so a ticket whose description contains a screenshot will list it here.',
+    'List the files attached to a task, comment, page or project (screenshots, PDFs, logs). Returns each attachment ID, filename, MIME type and size. Use get_attachment to actually read an attachment. Note that images embedded in a task description are attachments too, so a ticket whose description contains a screenshot will list it here.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -355,13 +355,13 @@ export async function getAttachmentTool(
 export const getAttachmentDefinition = {
   name: 'get_attachment',
   description:
-    'Download a Productive.io attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and anything else (PDFs, Office documents, ...) as a signed download link valid for 15 minutes: save it with curl and open the file from disk. Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
+    'Download an attachment of any type by ID and return its contents. Images (screenshots, mockups) come back as viewable image content, text-based files as text, and anything else (PDFs, Office documents, ...) as a signed download link valid for 15 minutes: save it with curl and open the file from disk. Get attachment IDs from list_attachments or from the Attachments section of get_task. Use this whenever a ticket references a screenshot, guide, spec or other file you need to read.',
   inputSchema: {
     type: 'object',
     properties: {
       attachment_id: {
         type: 'string',
-        description: 'The ID of the attachment to download (required)',
+        description: 'The ID of the attachment to download',
       },
       thumbnail: {
         type: 'boolean',

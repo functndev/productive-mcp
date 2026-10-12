@@ -74,7 +74,7 @@ export async function listBoards(
 
 export const listBoardsTool = {
   name: 'list_boards',
-  description: 'Get a list of boards from Productive.io',
+  description: 'Get a list of boards',
   inputSchema: {
     type: 'object',
     properties: {
@@ -164,7 +164,7 @@ export async function createBoard(
 
 export const createBoardTool = {
   name: 'create_board',
-  description: 'Create a new board in a Productive.io project',
+  description: 'Create a new board in a project',
   inputSchema: {
     type: 'object',
     properties: {
