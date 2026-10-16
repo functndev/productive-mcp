@@ -5,16 +5,11 @@ import {
   type OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
 import {
-  addApprovedClient,
   createOAuthState,
   fetchUpstreamAuthToken,
-  generateCSRFProtection,
   getUpstreamAuthorizeUrl,
-  isClientApproved,
   OAuthError,
   type Props,
-  renderApprovalDialog,
-  validateCSRFToken,
   validateOAuthState,
 } from "./workers-oauth-utils.js";
 
@@ -78,85 +73,18 @@ export async function handleAccessRequest(
 ) {
   const { pathname, searchParams } = new URL(request.url);
 
+  // No page of our own and no consent step: straight on to Cloudflare Access (Google only). Consent
+  // would only guard against unknown apps receiving tokens; index.ts already limits that to Claude's
+  // callbacks and local clients (clients.ts).
   if (request.method === "GET" && pathname === "/authorize") {
     const oauthReqInfo = await env.OAUTH_PROVIDER.parseAuthRequest(request);
-    const { clientId } = oauthReqInfo;
-    if (!clientId) return new Response("Invalid request", { status: 400 });
-
-    if (await isClientApproved(request, clientId, env.COOKIE_ENCRYPTION_KEY)) {
-      const { stateToken, codeChallenge } = await createOAuthState(
-        oauthReqInfo,
-        env.OAUTH_KV,
-        env.COOKIE_ENCRYPTION_KEY,
-      );
-      return redirectToAccess(request, env, stateToken, codeChallenge);
-    }
-
-    const { token: csrfToken, setCookie } = generateCSRFProtection();
-    return renderApprovalDialog(request, {
-      client: await env.OAUTH_PROVIDER.lookupClient(clientId),
-      csrfToken,
-      server: {
-        description:
-          "Remote MCP server for Productive.io, secured by Cloudflare Access.",
-        logo: "https://avatars.githubusercontent.com/u/314135?s=200&v=4",
-        name: "Productive MCP Server",
-      },
-      setCookie,
-      state: { oauthReqInfo },
-    });
-  }
-
-  if (request.method === "POST" && pathname === "/authorize") {
-    try {
-      const formData = await request.formData();
-      const csrfResult = validateCSRFToken(formData, request);
-
-      const encodedState = formData.get("state");
-      if (!encodedState || typeof encodedState !== "string") {
-        return new Response("Missing state in form data", { status: 400 });
-      }
-
-      let state: { oauthReqInfo?: AuthRequest };
-      try {
-        state = JSON.parse(atob(encodedState));
-      } catch {
-        return new Response("Invalid state data", { status: 400 });
-      }
-
-      if (!state.oauthReqInfo || !state.oauthReqInfo.clientId) {
-        return new Response("Invalid request", { status: 400 });
-      }
-
-      const approvedClientCookie = await addApprovedClient(
-        request,
-        state.oauthReqInfo.clientId,
-        env.COOKIE_ENCRYPTION_KEY,
-      );
-      const { stateToken, codeChallenge } = await createOAuthState(
-        state.oauthReqInfo,
-        env.OAUTH_KV,
-        env.COOKIE_ENCRYPTION_KEY,
-      );
-
-      const redirectHeaders = new Headers();
-      redirectHeaders.append("Set-Cookie", approvedClientCookie);
-      redirectHeaders.append("Set-Cookie", csrfResult.clearCookie);
-
-      return redirectToAccess(
-        request,
-        env,
-        stateToken,
-        codeChallenge,
-        redirectHeaders,
-      );
-    } catch (error: any) {
-      console.error("POST /authorize error:", error);
-      if (error instanceof OAuthError) return error.toResponse();
-      return new Response(`Internal server error: ${error.message}`, {
-        status: 500,
-      });
-    }
+    if (!oauthReqInfo.clientId) return new Response("Invalid request", { status: 400 });
+    const { stateToken, codeChallenge } = await createOAuthState(
+      oauthReqInfo,
+      env.OAUTH_KV,
+      env.COOKIE_ENCRYPTION_KEY,
+    );
+    return redirectToAccess(request, env, stateToken, codeChallenge);
   }
 
   if (request.method === "GET" && pathname === "/callback") {

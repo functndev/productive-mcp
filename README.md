@@ -8,7 +8,7 @@ This Worker uses the [Access for SaaS](https://developers.cloudflare.com/cloudfl
 
 Flow:
 
-1. MCP client hits `/authorize`. The Worker shows a consent screen, then redirects to your Access for SaaS authorization endpoint (PKCE).
+1. MCP client hits `/authorize`. The Worker redirects straight to your Access for SaaS authorization endpoint (PKCE), with no page of its own: only Claude's callbacks and local clients may receive tokens (`src/clients.ts`), so there is no consent step.
 2. User authenticates through Access (any IdP you have configured).
 3. Access redirects back to `/callback` with an authorization code. The Worker exchanges it for `access_token` + `id_token`, verifies the `id_token` against `ACCESS_JWKS_URL`, and reads the `email` claim.
 4. Email is looked up in the `USER_MAPPING` secret. Unknown emails get `403`.
@@ -67,7 +67,7 @@ wrangler secret put ACCESS_AUTHORIZATION_URL
 wrangler secret put ACCESS_TOKEN_URL
 wrangler secret put ACCESS_JWKS_URL
 
-# Cookie signing key for the consent screen / OAuth state
+# Signing key for the OAuth state
 openssl rand -hex 32 | wrangler secret put COOKIE_ENCRYPTION_KEY
 ```
 
