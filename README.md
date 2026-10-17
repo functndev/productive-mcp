@@ -29,10 +29,10 @@ Flow:
 ### 1. Create the KV namespace
 
 ```sh
-npx wrangler kv namespace create OAUTH_KV
+bunx cf kv namespaces create --title OAUTH_KV
 ```
 
-Copy the resulting id into [wrangler.jsonc](wrangler.jsonc) (replacing `<Add-KV-ID>`).
+Put the resulting id into the `OAUTH_KV` binding in [cloudflare.config.ts](cloudflare.config.ts).
 
 ### 2. Create an Access for SaaS OIDC application
 
@@ -43,53 +43,46 @@ In the Cloudflare dashboard: **Zero Trust → Access → Applications → Add an
 - **Scopes**: `openid`, `email`, `profile`
 - Configure Access policies (e.g. emails on your domain).
 
-Copy these from the OIDC settings:
+Copy these from the OIDC settings into the 1Password item `productive-mcp` (vault `Infra - L7`).
+Only the client secret is a Worker secret; the rest is plain config in `cloudflare.config.ts`:
 
-| Field in dashboard     | Secret name                |
-| ---------------------- | -------------------------- |
-| Client ID              | `ACCESS_CLIENT_ID`         |
-| Client secret          | `ACCESS_CLIENT_SECRET`     |
-| Authorization endpoint | `ACCESS_AUTHORIZATION_URL` |
-| Token endpoint         | `ACCESS_TOKEN_URL`         |
-| Key endpoint (JWKS)    | `ACCESS_JWKS_URL`          |
+| Field in dashboard     | Variable                   | Lives in                    |
+| ---------------------- | -------------------------- | --------------------------- |
+| Client ID              | `ACCESS_CLIENT_ID`         | `cloudflare.config.ts`      |
+| Client secret          | `ACCESS_CLIENT_SECRET`     | Worker secret               |
+| Authorization endpoint | `ACCESS_AUTHORIZATION_URL` | `cloudflare.config.ts`      |
+| Token endpoint         | `ACCESS_TOKEN_URL`         | `cloudflare.config.ts`      |
+| Key endpoint (JWKS)    | `ACCESS_JWKS_URL`          | `cloudflare.config.ts`      |
 
 ### 3. Set Worker secrets
 
+1Password is the source of truth: the item `productive-mcp` in vault `Infra - L7` holds every value
+(secrets and config), one field per variable. `.env.tpl` lists the three secrets as `op://`
+references. Change a secret in 1Password, then push it:
+
 ```sh
-# Productive
-wrangler secret put PRODUCTIVE_ORG_ID
-wrangler secret put USER_MAPPING < users.json
-
-# Access for SaaS
-wrangler secret put ACCESS_CLIENT_ID
-wrangler secret put ACCESS_CLIENT_SECRET
-wrangler secret put ACCESS_AUTHORIZATION_URL
-wrangler secret put ACCESS_TOKEN_URL
-wrangler secret put ACCESS_JWKS_URL
-
-# Signing key for the OAuth state
-openssl rand -hex 32 | wrangler secret put COOKIE_ENCRYPTION_KEY
+for name in USER_MAPPING ACCESS_CLIENT_SECRET COOKIE_ENCRYPTION_KEY; do
+  bunx cf workers secrets update "$name" --worker productive-mcp \
+    --text "$(op read "op://Infra - L7/productive-mcp/$name")"
+done
 ```
 
-`users.json`:
+`COOKIE_ENCRYPTION_KEY` is `openssl rand -hex 32`. `USER_MAPPING` is single-line JSON:
 
 ```json
-{
-  "alice@example.com": { "userId": 123456, "apiToken": "alice-token" },
-  "bob@example.com": { "userId": 234567, "apiToken": "bob-token" }
-}
+{"alice@example.com":{"userId":123456,"apiToken":"alice-token","isAdmin":true},"bob@example.com":{"userId":234567,"apiToken":"bob-token"}}
 ```
 
 Email keys are looked up case-insensitively (lowercased).
 
 ## Local development
 
-Secrets live in 1Password (vault `Infra - L7`, item `productive-mcp`). `.env.tpl` lists every variable as an `op://` reference; write `.env` from it, then:
+Secrets live in 1Password (vault `Infra - L7`, item `productive-mcp`). `.env.tpl` lists the secrets as `op://` references; write `.env` from it, then:
 
 ```sh
 op inject -f -i .env.tpl -o .env
 npm install
-npm run dev
+npm run dev      # cf dev
 ```
 
 A real Access for SaaS app is still required for the OAuth dance to work locally. Either add `http://localhost:8787/callback` as a redirect URL on your existing app, or create a separate dev app.
@@ -97,7 +90,7 @@ A real Access for SaaS app is still required for the OAuth dance to work locally
 ## Deploying
 
 ```sh
-npm run deploy
+npm run deploy   # cf deploy; config in cloudflare.config.ts
 ```
 
 ## Connecting Claude Desktop / other MCP clients
