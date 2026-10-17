@@ -3,7 +3,6 @@ import {
   ProductiveCompany,
   ProductiveProject,
   ProductiveTask,
-  ProductiveBoard,
   ProductiveTaskList,
   ProductivePerson,
   ProductiveActivity,
@@ -20,7 +19,6 @@ import {
   ProductiveSingleResponse,
   ProductiveTaskCreate,
   ProductiveTaskUpdate,
-  ProductiveBoardCreate,
   ProductiveTaskListCreate,
   ProductiveTaskListUpdate,
   ProductiveCommentCreate,
@@ -223,43 +221,6 @@ export class ProductiveAPIClient {
     return this.makeRequest<ProductiveResponse<ProductiveTask>>(path);
   }
 
-  async listBoards(params?: {
-    project_id?: string;
-    limit?: number;
-    page?: number;
-  }): Promise<ProductiveResponse<ProductiveBoard>> {
-    const queryParams = new URLSearchParams();
-
-    if (params?.project_id) {
-      queryParams.append("filter[project_id]", params.project_id);
-    }
-
-    if (params?.limit) {
-      queryParams.append("page[size]", params.limit.toString());
-    }
-
-    if (params?.page) {
-      queryParams.append("page[number]", params.page.toString());
-    }
-
-    const queryString = queryParams.toString();
-    const path = `boards${queryString ? `?${queryString}` : ""}`;
-
-    return this.makeRequest<ProductiveResponse<ProductiveBoard>>(path);
-  }
-
-  async createBoard(
-    boardData: ProductiveBoardCreate,
-  ): Promise<ProductiveSingleResponse<ProductiveBoard>> {
-    return this.makeRequest<ProductiveSingleResponse<ProductiveBoard>>(
-      "boards",
-      {
-        method: "POST",
-        body: JSON.stringify(boardData),
-      },
-    );
-  }
-
   async createTask(
     taskData: ProductiveTaskCreate,
   ): Promise<ProductiveSingleResponse<ProductiveTask>> {
@@ -270,14 +231,14 @@ export class ProductiveAPIClient {
   }
 
   async listTaskLists(params?: {
-    board_id?: string;
+    folder_id?: string;
     limit?: number;
     page?: number;
   }): Promise<ProductiveResponse<ProductiveTaskList>> {
     const queryParams = new URLSearchParams();
 
-    if (params?.board_id) {
-      queryParams.append("filter[board_id]", params.board_id);
+    if (params?.folder_id) {
+      queryParams.append("filter[folder_id]", params.folder_id);
     }
 
     if (params?.limit) {
@@ -313,7 +274,6 @@ export class ProductiveAPIClient {
   async listPeople(params?: {
     company_id?: string;
     project_id?: string;
-    is_active?: boolean;
     email?: string;
     limit?: number;
     page?: number;
@@ -326,10 +286,6 @@ export class ProductiveAPIClient {
 
     if (params?.project_id) {
       queryParams.append("filter[project_id]", params.project_id);
-    }
-
-    if (params?.is_active !== undefined) {
-      queryParams.append("filter[is_active]", params.is_active.toString());
     }
 
     if (params?.email) {
@@ -645,7 +601,7 @@ export class ProductiveAPIClient {
    *
    * @param params - Filter parameters for deals
    * @param params.project_id - Filter by project ID (required)
-   * @param params.budget_type - Filter by budget type (1: deal, 2: budget)
+   * @param params.type - Filter by type (1: deal, 2: budget)
    * @param params.limit - Number of results per page
    * @param params.page - Page number for pagination
    * @returns Promise resolving to paginated deals response
@@ -654,12 +610,12 @@ export class ProductiveAPIClient {
    * // Get all deals/budgets for a project
    * const deals = await client.listProjectDeals({
    *   project_id: '123',
-   *   budget_type: 2 // Only budgets
+   *   type: 2 // Only budgets
    * });
    */
   async listProjectDeals(params: {
     project_id: string;
-    budget_type?: number; // 1: deal, 2: budget
+    type?: number; // 1: deal, 2: budget
     limit?: number;
     page?: number;
   }): Promise<ProductiveResponse<ProductiveDeal>> {
@@ -671,8 +627,8 @@ export class ProductiveAPIClient {
     // Filter by project - deals endpoint expects array format
     queryParams.append("filter[project_id]", params.project_id);
 
-    if (params.budget_type) {
-      queryParams.append("filter[budget_type]", params.budget_type.toString());
+    if (params.type) {
+      queryParams.append("filter[type]", params.type.toString());
     }
 
     if (params.limit) {
@@ -1034,7 +990,7 @@ export class ProductiveAPIClient {
     name: string;
     template_id: string;
     project_id: string;
-    board_id: string;
+    folder_id: string;
     copy_open_tasks?: boolean;
     copy_assignees?: boolean;
   }): Promise<ProductiveSingleResponse<ProductiveTaskList>> {
@@ -1049,7 +1005,7 @@ export class ProductiveAPIClient {
               name: params.name,
               template_id: params.template_id,
               project_id: params.project_id,
-              board_id: params.board_id,
+              folder_id: params.folder_id,
               copy_open_tasks: params.copy_open_tasks,
               copy_assignees: params.copy_assignees,
             },
@@ -1059,11 +1015,11 @@ export class ProductiveAPIClient {
     );
   }
 
-  async moveTaskList(taskListId: string, boardId: string): Promise<void> {
+  async moveTaskList(taskListId: string, folderId: string): Promise<void> {
     return this.makeVoidRequest(`task_lists/${taskListId}/move`, {
       method: "PATCH",
       body: JSON.stringify({
-        data: { type: "task_lists", attributes: { board_id: boardId } },
+        data: { type: "task_lists", attributes: { folder_id: folderId } },
       }),
     });
   }

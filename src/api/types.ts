@@ -94,28 +94,6 @@ export interface ProductiveResponse<T> {
   };
 }
 
-export interface ProductiveBoard {
-  id: string;
-  type: 'boards';
-  attributes: {
-    name: string;
-    description?: string;
-    position?: number;
-    created_at: string;
-    updated_at: string;
-    [key: string]: any;
-  };
-  relationships?: {
-    project?: {
-      data: {
-        id: string;
-        type: 'projects';
-      };
-    };
-    [key: string]: any;
-  };
-}
-
 export interface ProductiveTaskCreate {
   data: {
     type: 'tasks';
@@ -130,12 +108,6 @@ export interface ProductiveTaskCreate {
         data: {
           id: string;
           type: 'projects';
-        };
-      };
-      board?: {
-        data: {
-          id: string;
-          type: 'boards';
         };
       };
       task_list?: {
@@ -166,31 +138,13 @@ export interface ProductiveTaskList {
     [key: string]: any;
   };
   relationships?: {
-    board?: {
+    folder?: {
       data: {
         id: string;
-        type: 'boards';
+        type: 'folders';
       };
     };
     [key: string]: any;
-  };
-}
-
-export interface ProductiveBoardCreate {
-  data: {
-    type: 'boards';
-    attributes: {
-      name: string;
-      description?: string;
-    };
-    relationships: {
-      project: {
-        data: {
-          id: string;
-          type: 'projects';
-        };
-      };
-    };
   };
 }
 
@@ -202,14 +156,7 @@ export interface ProductiveTaskListCreate {
       description?: string;
       position?: number;
       project_id: string;
-    };
-    relationships: {
-      board: {
-        data: {
-          id: string;
-          type: 'boards';
-        };
-      };
+      folder_id: string;
     };
   };
 }
@@ -463,7 +410,7 @@ export interface ProductiveDeal {
   type: 'deals';
   attributes: {
     name: string;
-    budget_type?: number; // 1: deal, 2: budget
+    budget?: boolean; // true: budget, false: deal
     value?: number;
     created_at?: string;
     updated_at?: string;

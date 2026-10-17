@@ -445,7 +445,7 @@ export async function listServicesTool(
 // Zod schema for list project deals/budgets
 export const listProjectDealsSchema = z.object({
   project_id: z.string().min(1, 'Project ID is required').describe('The project ID'),
-  budget_type: z.number().int().min(1).max(2).optional().describe('Only 1 = deals or 2 = budgets'),
+  type: z.number().int().min(1).max(2).optional().describe('Only 1 = deals or 2 = budgets'),
   limit: z.number().min(1).max(200).default(30).optional().describe('Deals/budgets to return (1-200, default 30)'),
 });
 
@@ -459,7 +459,7 @@ export async function listProjectDealsTool(
     
     const response = await client.listProjectDeals({
       project_id: params.project_id,
-      budget_type: params.budget_type,
+      type: params.type,
       limit: params.limit,
     });
     
@@ -473,16 +473,15 @@ export async function listProjectDealsTool(
     }
     
     const dealsText = response.data.map(deal => {
-      const budgetType = deal.attributes.budget_type === 1 ? 'Deal' : 
-                        deal.attributes.budget_type === 2 ? 'Budget' : 'Unknown';
+      const budgetType = deal.attributes.budget ? 'Budget' : 'Deal';
       const value = deal.attributes.value ? ` (Value: ${deal.attributes.value})` : '';
       
       return `• ${budgetType} (ID: ${deal.id})
   Name: ${deal.attributes.name}${value}`;
     }).join('\n\n');
     
-    const typeFilter = params.budget_type === 1 ? ' deals' : 
-                      params.budget_type === 2 ? ' budgets' : ' deals/budgets';
+    const typeFilter = params.type === 1 ? ' deals' : 
+                      params.type === 2 ? ' budgets' : ' deals/budgets';
     
     const summary = `Found ${response.data.length}${typeFilter} for project ${params.project_id}:\n\n${dealsText}`;
     

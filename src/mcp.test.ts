@@ -88,8 +88,6 @@ describe('tools/list', () => {
       'list_users',
       'list_companies',
       'list_projects',
-      'list_boards',
-      'create_board',
       'list_task_lists',
       'get_task_list',
       'create_task_list',
@@ -162,6 +160,98 @@ describe('list_tasks', () => {
     expect(calls[0]!.url.searchParams.get('filter[assignee_id]')).toBe('123');
     expect(calls[0]!.url.searchParams.get('filter[project_id]')).toBe('7');
     expect(calls[0]!.url.searchParams.get('page[size]')).toBe('200');
+  });
+});
+
+// Productive retired /boards and filter[board_id]; folders took their place. These pin the keys
+// the live API accepts, so a regression to the board names fails here rather than in production.
+describe('folders instead of boards', () => {
+  test('list_task_lists filters by folder_id and shows the folder relationship', async () => {
+    const calls = mockProductive({
+      'GET task_lists': () => ({
+        data: [{ id: '5', type: 'task_lists', attributes: { name: 'Sprint' }, relationships: { folder: { data: { id: '882467', type: 'folders' } } } }],
+      }),
+    });
+    const result = await callTool('list_task_lists', { folder_id: '882467' });
+
+    expect(result.isError).toBeUndefined();
+    expect(calls[0]!.url.searchParams.get('filter[folder_id]')).toBe('882467');
+    expect(calls[0]!.url.searchParams.has('filter[board_id]')).toBe(false);
+    expect(textOf(result)).toContain('Folder ID: 882467');
+  });
+
+  test('create_task_list sends folder_id as an attribute, not a board relationship', async () => {
+    const calls = mockProductive({ 'POST task_lists': (call) => ({ data: { id: '5', type: 'task_lists', attributes: call.body.data.attributes } }) });
+    const result = await callTool('create_task_list', { folder_id: '882467', project_id: '7', name: 'Sprint' });
+
+    expect(result.isError).toBeUndefined();
+    expect(calls[0]!.body.data.attributes).toMatchObject({ folder_id: '882467', project_id: '7', name: 'Sprint' });
+    expect(calls[0]!.body.data.relationships).toBeUndefined();
+  });
+
+  test('copy_task_list and moving a task list send folder_id', async () => {
+    const calls = mockProductive({
+      'POST task_lists/copy': () => ({ data: { id: '6', type: 'task_lists', attributes: { name: 'Copy' } } }),
+      'PATCH task_lists/5/move': () => new Response(null, { status: 204 }),
+    });
+    await callTool('copy_task_list', { name: 'Copy', template_id: '5', project_id: '7', folder_id: '882467' });
+    await callTool('update_task_list', { task_list_id: '5', folder_id: '882468' });
+
+    expect(calls[0]!.body.data.attributes.folder_id).toBe('882467');
+    expect(calls[0]!.body.data.attributes.board_id).toBeUndefined();
+    expect(calls[1]!.body.data.attributes).toEqual({ folder_id: '882468' });
+  });
+
+  test('to_backlog finds the Backlog list through the project folders', async () => {
+    const calls = mockProductive({
+      'GET tasks/1': () => ({ data: { id: '1', type: 'tasks', attributes: {}, relationships: { project: { data: { id: '7', type: 'projects' } } } } }),
+      'GET folders': () => ({ data: [{ id: '882467', type: 'folders', attributes: { name: 'Main' } }] }),
+      'GET task_lists': () => ({ data: [{ id: '9', type: 'task_lists', attributes: { name: 'Backlog' } }] }),
+      'PATCH tasks/1': () => task(),
+    });
+    const result = await callTool('update_task', { task_id: '1', to_backlog: true });
+
+    expect(result.isError).toBeUndefined();
+    expect(calls.map((c) => `${c.method} ${c.url.pathname.replace('/api/v2/', '')}`)).toEqual(['GET tasks/1', 'GET folders', 'GET task_lists', 'PATCH tasks/1']);
+    expect(calls[1]!.url.searchParams.get('filter[project_id]')).toBe('7');
+    expect(calls[2]!.url.searchParams.get('filter[folder_id]')).toBe('882467');
+    expect(calls[3]!.body.data.relationships.task_list.data.id).toBe('9');
+  });
+
+  test('to_backlog creates a missing Backlog list in the first folder', async () => {
+    const calls = mockProductive({
+      'GET tasks/1': () => ({ data: { id: '1', type: 'tasks', attributes: {}, relationships: { project: { data: { id: '7', type: 'projects' } } } } }),
+      'GET folders': () => ({ data: [{ id: '882467', type: 'folders', attributes: { name: 'Main' } }] }),
+      'GET task_lists': () => ({ data: [] }),
+      'POST task_lists': () => ({ data: { id: '10', type: 'task_lists', attributes: { name: 'Backlog' } } }),
+      'PATCH tasks/1': () => task(),
+    });
+    await callTool('update_task', { task_id: '1', to_backlog: true });
+
+    const create = calls.find((c) => c.method === 'POST')!;
+    expect(create.body.data.attributes).toMatchObject({ name: 'Backlog', project_id: '7', folder_id: '882467' });
+    expect(create.body.data.relationships).toBeUndefined();
+  });
+
+  test('create_task does not accept or send a board', async () => {
+    const calls = mockProductive({ 'POST tasks': () => task() });
+    await callTool('create_task', { title: 'Fix login', task_list_id: '5', board_id: '882467' });
+
+    expect(calls[0]!.body.data.relationships.board).toBeUndefined();
+    expect(calls[0]!.body.data.relationships.task_list.data.id).toBe('5');
+  });
+});
+
+describe('list_project_deals', () => {
+  test('filters deals vs. budgets with filter[type] and labels them from the budget flag', async () => {
+    const calls = mockProductive({
+      'GET deals': () => ({ data: [{ id: '3', type: 'deals', attributes: { name: 'Retainer', budget: true } }] }),
+    });
+    const result = await callTool('list_project_deals', { project_id: '7', type: 2 });
+
+    expect(calls[0]!.url.searchParams.get('filter[type]')).toBe('2');
+    expect(calls[0]!.url.searchParams.has('filter[budget_type]')).toBe(false);
+    expect(textOf(result)).toContain('Budget (ID: 3)');
   });
 });
 

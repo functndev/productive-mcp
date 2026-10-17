@@ -15,51 +15,41 @@ export async function addToBacklog(
   try {
     const { task_id, project_id } = addToBacklogSchema.parse(args);
     
-    // First, find all boards in the project
-    const boardsResponse = await client.listBoards({ project_id });
+    // First, find all folders in the project
+    const foldersResponse = await client.listFolders({ project_id });
     
-    if (boardsResponse.data.length === 0) {
+    if (foldersResponse.data.length === 0) {
       throw new McpError(
         ErrorCode.InvalidParams,
-        `No boards found in project ${project_id}. Cannot create backlog.`
+        `No folders found in project ${project_id}. Cannot create backlog.`
       );
     }
     
-    // Look for a Backlog task list in each board
+    // Look for a Backlog task list in each folder
     let backlogListId: string | null = null;
-    let boardId: string | null = null;
     
-    for (const board of boardsResponse.data) {
-      const taskListsResponse = await client.listTaskLists({ board_id: board.id });
+    for (const folder of foldersResponse.data) {
+      const taskListsResponse = await client.listTaskLists({ folder_id: folder.id });
       const backlogList = taskListsResponse.data.find(
         list => list.attributes.name.toLowerCase() === 'backlog'
       );
       
       if (backlogList) {
         backlogListId = backlogList.id;
-        boardId = board.id;
         break;
       }
     }
     
-    // If no backlog list found, create one in the first board
+    // If no backlog list found, create one in the first folder
     if (!backlogListId) {
-      boardId = boardsResponse.data[0].id;
       const createResponse = await client.createTaskList({
         data: {
           type: 'task_lists',
           attributes: {
             name: 'Backlog',
             description: 'Product backlog for unscheduled tasks',
-            project_id: project_id
-          },
-          relationships: {
-            board: {
-              data: {
-                id: boardId,
-                type: 'boards'
-              }
-            }
+            project_id: project_id,
+            folder_id: foldersResponse.data[0].id
           }
         }
       });

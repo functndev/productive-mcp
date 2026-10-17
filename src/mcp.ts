@@ -8,7 +8,6 @@ import { registerWhoamiTools } from './tools/whoami.js';
 import { registerUserTools } from './tools/users.js';
 import { registerCompanyTools } from './tools/companies.js';
 import { registerProjectTools } from './tools/projects.js';
-import { registerBoardTools } from './tools/boards.js';
 import { registerTaskListTools } from './tools/task-lists.js';
 import { registerTaskTools } from './tools/tasks.js';
 import { registerSubtaskTools } from './tools/subtasks.js';
@@ -32,7 +31,6 @@ const TOOL_MODULES: RegisterTools[] = [
   registerUserTools,
   registerCompanyTools,
   registerProjectTools,
-  registerBoardTools,
   registerTaskListTools,
   registerTaskTools,
   registerSubtaskTools,
@@ -57,7 +55,7 @@ export function createMcpServer(config: Config, attachmentLinks?: AttachmentLink
   const server = new McpServer(
     { name: 'productive-mcp', title: 'Productive', version: '2.0.0' },
     {
-      instructions: `Productive.io: Customers → Projects → Boards → Task Lists → Tasks.${config.PRODUCTIVE_USER_ID ? ` The signed-in user ("me") has person ID ${config.PRODUCTIVE_USER_ID}.` : ''}`,
+      instructions: `Productive.io: Customers → Projects → Folders → Task Lists → Tasks.${config.PRODUCTIVE_USER_ID ? ` The signed-in user ("me") has person ID ${config.PRODUCTIVE_USER_ID}.` : ''}`,
       cacheHints: { 'tools/list': LIST_CACHE, 'prompts/list': LIST_CACHE },
     }
   );
