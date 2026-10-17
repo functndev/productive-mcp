@@ -260,7 +260,6 @@ export const createTaskSchema = z.object({
   description: z.string().optional().describe('Plain text'),
   description_html: z.string().optional().describe('HTML (<h2>, <p>, <ul>, <li>, <strong>, <em>, <a href="">); wins over description'),
   project_id: z.string().optional(),
-  board_id: z.string().optional(),
   task_list_id: z.string().min(1, 'task_list_id is required by the Productive API').describe('Required; find one with list_task_lists'),
   assignee_id: z.string().optional().describe('Person ID, or "me"'),
   due_date: z.string().optional().describe('YYYY-MM-DD'),
@@ -313,15 +312,6 @@ export async function createTaskTool(
       };
     }
     
-    if (params.board_id) {
-      taskData.data.relationships.board = {
-        data: {
-          id: params.board_id,
-          type: 'boards' as const,
-        },
-      };
-    }
-    
     if (params.task_list_id) {
       taskData.data.relationships.task_list = {
         data: {
@@ -354,9 +344,6 @@ export async function createTaskTool(
     }
     if (params.project_id) {
       text += `\nProject ID: ${params.project_id}`;
-    }
-    if (params.board_id) {
-      text += `\nBoard ID: ${params.board_id}`;
     }
     if (params.task_list_id) {
       text += `\nTask List ID: ${params.task_list_id}`;
@@ -683,7 +670,7 @@ export const registerTaskTools: RegisterTools = (server, { client, config }) => 
     'create_task',
     {
       title: 'Create task',
-      description: 'Create a task in a task list (find one with list_boards → list_task_lists).',
+      description: 'Create a task in a task list (find one with list_folders → list_task_lists).',
       inputSchema: createTaskSchema,
       annotations: WRITE,
     },

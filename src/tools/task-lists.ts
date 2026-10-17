@@ -4,7 +4,7 @@ import { McpError, ErrorCode } from '../errors.js';
 import { READ, WRITE, result, runSteps, type RegisterTools, type Step, type TextResult } from './context.js';
 
 export const listTaskListsSchema = z.object({
-  board_id: z.string().optional().describe('Only task lists of this board'),
+  folder_id: z.string().optional().describe('Only task lists of this folder'),
   limit: z.number().int().min(1).max(200).optional().default(30).describe('Max task lists (1-200)'),
 });
 
@@ -16,12 +16,12 @@ export async function listTaskLists(
     const params = listTaskListsSchema.parse(args || {});
     
     const response = await client.listTaskLists({
-      board_id: params.board_id,
+      folder_id: params.folder_id,
       limit: params.limit,
     });
     
     if (!response || !response.data || response.data.length === 0) {
-      const filterText = params.board_id ? ` for board ${params.board_id}` : '';
+      const filterText = params.folder_id ? ` for folder ${params.folder_id}` : '';
       return {
         content: [{
           type: 'text',
@@ -38,8 +38,8 @@ export async function listTaskLists(
       if (taskList.attributes.position !== undefined) {
         text += `\nPosition: ${taskList.attributes.position}`;
       }
-      if (taskList.relationships?.board?.data?.id) {
-        text += `\nBoard ID: ${taskList.relationships.board.data.id}`;
+      if (taskList.relationships?.folder?.data?.id) {
+        text += `\nFolder ID: ${taskList.relationships.folder.data.id}`;
       }
       return text;
     }).join('\n\n');
@@ -73,8 +73,8 @@ export async function listTaskLists(
 }
 
 export const createTaskListSchema = z.object({
-  board_id: z.string().describe('Board to create the task list in'),
-  project_id: z.string().describe('Project of that board'),
+  folder_id: z.string().describe('Folder to create the task list in'),
+  project_id: z.string().describe('Project of that folder'),
   name: z.string().describe('Task list name'),
   description: z.string().optional().describe('Task list description'),
 });
@@ -94,14 +94,7 @@ export async function createTaskList(
           ...(params.description && { description: params.description }),
           position: 0,
           project_id: params.project_id,
-        },
-        relationships: {
-          board: {
-            data: {
-              id: params.board_id,
-              type: 'boards' as const,
-            },
-          },
+          folder_id: params.folder_id,
         },
       },
     };
@@ -113,7 +106,7 @@ export async function createTaskList(
     if (response.data.attributes.description) {
       text += `\nDescription: ${response.data.attributes.description}`;
     }
-    text += `\nBoard ID: ${params.board_id}`;
+    text += `\nFolder ID: ${params.folder_id}`;
     if (response.data.attributes.created_at) {
       text += `\nCreated at: ${response.data.attributes.created_at}`;
     }
@@ -169,8 +162,8 @@ export async function getTaskList(
     if (taskList.attributes.position !== undefined) {
       text += `\nPosition: ${taskList.attributes.position}`;
     }
-    if (taskList.relationships?.board?.data?.id) {
-      text += `\nBoard ID: ${taskList.relationships.board.data.id}`;
+    if (taskList.relationships?.folder?.data?.id) {
+      text += `\nFolder ID: ${taskList.relationships.folder.data.id}`;
     }
     if (taskList.attributes.created_at) {
       text += `\nCreated at: ${taskList.attributes.created_at}`;
@@ -357,7 +350,7 @@ export const copyTaskListSchema = z.object({
   name: z.string().describe('Name of the new task list'),
   template_id: z.string().describe('Task list to copy'),
   project_id: z.string().describe('Project for the new task list'),
-  board_id: z.string().describe('Board for the new task list'),
+  folder_id: z.string().describe('Folder for the new task list'),
   copy_open_tasks: z.boolean().optional().describe("Also copy the template's open tasks"),
   copy_assignees: z.boolean().optional().describe("Also copy the tasks' assignees"),
 });
@@ -373,7 +366,7 @@ export async function copyTaskList(
       name: params.name,
       template_id: params.template_id,
       project_id: params.project_id,
-      board_id: params.board_id,
+      folder_id: params.folder_id,
       ...(params.copy_open_tasks !== undefined && { copy_open_tasks: params.copy_open_tasks }),
       ...(params.copy_assignees !== undefined && { copy_assignees: params.copy_assignees }),
     });
@@ -384,7 +377,7 @@ export async function copyTaskList(
     if (taskList.attributes.description) {
       text += `\nDescription: ${taskList.attributes.description}`;
     }
-    text += `\nBoard ID: ${params.board_id}`;
+    text += `\nFolder ID: ${params.folder_id}`;
 
     return {
       content: [{
@@ -418,7 +411,7 @@ export async function copyTaskList(
 
 const MoveTaskListSchema = z.object({
   task_list_id: z.string().describe('The ID of the task list to move'),
-  board_id: z.string().describe('The ID of the destination board'),
+  folder_id: z.string().describe('The ID of the destination folder'),
 });
 
 export async function moveTaskList(
@@ -428,12 +421,12 @@ export async function moveTaskList(
   try {
     const params = MoveTaskListSchema.parse(args);
 
-    await client.moveTaskList(params.task_list_id, params.board_id);
+    await client.moveTaskList(params.task_list_id, params.folder_id);
 
     return {
       content: [{
         type: 'text',
-        text: `Task list ${params.task_list_id} moved to board ${params.board_id} successfully.`,
+        text: `Task list ${params.task_list_id} moved to folder ${params.folder_id} successfully.`,
       }],
     };
   } catch (error) {
@@ -506,7 +499,7 @@ export const updateTaskListSchema = z.object({
   task_list_id: z.string().describe('Task list to change'),
   name: z.string().min(1).optional().describe('New name'),
   archived: z.boolean().optional().describe('true archives the task list, false restores it'),
-  board_id: z.string().optional().describe('Move the task list to this board'),
+  folder_id: z.string().optional().describe('Move the task list to this folder'),
   move_before_id: z.string().optional().describe('Reposition: place before this task list'),
 });
 
@@ -525,8 +518,8 @@ async function updateTaskListTool(client: ProductiveAPIClient, args: z.infer<typ
   if (args.name !== undefined) {
     steps.push(['name', () => updateTaskList(client, { task_list_id, name: args.name })]);
   }
-  if (args.board_id) {
-    steps.push(['move to board', () => moveTaskList(client, { task_list_id, board_id: args.board_id })]);
+  if (args.folder_id) {
+    steps.push(['move to folder', () => moveTaskList(client, { task_list_id, folder_id: args.folder_id })]);
   }
   if (args.move_before_id) {
     steps.push(['position', () => repositionTaskList(client, { task_list_id, move_before_id: args.move_before_id })]);
@@ -542,7 +535,7 @@ export const registerTaskListTools: RegisterTools = (server, { client }) => {
     'list_task_lists',
     {
       title: 'List task lists',
-      description: 'List task lists, optionally for one board. Task lists group tasks within a board.',
+      description: 'List task lists, optionally for one folder (find folders with list_folders). Task lists group tasks within a folder.',
       inputSchema: listTaskListsSchema,
       annotations: READ,
     },
@@ -562,7 +555,7 @@ export const registerTaskListTools: RegisterTools = (server, { client }) => {
     'create_task_list',
     {
       title: 'Create task list',
-      description: 'Create a task list in a board.',
+      description: 'Create a task list in a folder.',
       inputSchema: createTaskListSchema,
       annotations: WRITE,
     },
@@ -582,7 +575,7 @@ export const registerTaskListTools: RegisterTools = (server, { client }) => {
     'update_task_list',
     {
       title: 'Update task list',
-      description: 'Change an existing task list: rename, archive or restore, move to another board, or reposition. Pass only the fields to change.',
+      description: 'Change an existing task list: rename, archive or restore, move to another folder, or reposition. Pass only the fields to change.',
       inputSchema: updateTaskListSchema,
       annotations: WRITE,
     },
