@@ -84,9 +84,10 @@ Email keys are looked up case-insensitively (lowercased).
 
 ## Local development
 
-Copy `.dev.vars.example` to `.dev.vars` and fill in values, then:
+Secrets live in 1Password (vault `Infra - L7`, item `productive-mcp`). `.env.tpl` lists every variable as an `op://` reference; write `.env` from it, then:
 
 ```sh
+op inject -f -i .env.tpl -o .env
 npm install
 npm run dev
 ```
