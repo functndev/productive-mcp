@@ -39,6 +39,13 @@
     "PRODUCTIVE_API_BASE_URL": "https://api.productive.io/api/v2/",
     // Canonical origin: the OAuth resource is <PUBLIC_URL>/mcp.
     "PUBLIC_URL": "https://productive-mcp.functn.com",
+    "PRODUCTIVE_ORG_ID": "3591",
+    // Cloudflare Access SaaS app "Productive MCP" → OIDC. Not secret: the client ID shows up in every
+    // login redirect. The client secret stays a Worker secret (.env.tpl).
+    "ACCESS_CLIENT_ID": "4ed17bf00f728c7cc917d0701e6278eb3dbbf310d280862f394f985d0ad2d208",
+    "ACCESS_AUTHORIZATION_URL": "https://functn.cloudflareaccess.com/cdn-cgi/access/sso/oidc/4ed17bf00f728c7cc917d0701e6278eb3dbbf310d280862f394f985d0ad2d208/authorization",
+    "ACCESS_TOKEN_URL": "https://functn.cloudflareaccess.com/cdn-cgi/access/sso/oidc/4ed17bf00f728c7cc917d0701e6278eb3dbbf310d280862f394f985d0ad2d208/token",
+    "ACCESS_JWKS_URL": "https://functn.cloudflareaccess.com/cdn-cgi/access/sso/oidc/4ed17bf00f728c7cc917d0701e6278eb3dbbf310d280862f394f985d0ad2d208/jwks",
   },
   // Daily sweep of expired OAuth records (purgeExpiredData).
   "triggers": { "crons": ["23 3 * * *"] },

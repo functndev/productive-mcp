@@ -43,41 +43,33 @@ In the Cloudflare dashboard: **Zero Trust → Access → Applications → Add an
 - **Scopes**: `openid`, `email`, `profile`
 - Configure Access policies (e.g. emails on your domain).
 
-Copy these from the OIDC settings:
+Copy these from the OIDC settings into the 1Password item `productive-mcp` (vault `Infra - L7`).
+Only the client secret is a Worker secret; the rest is plain config in `wrangler.jsonc` `vars`:
 
-| Field in dashboard     | Secret name                |
-| ---------------------- | -------------------------- |
-| Client ID              | `ACCESS_CLIENT_ID`         |
-| Client secret          | `ACCESS_CLIENT_SECRET`     |
-| Authorization endpoint | `ACCESS_AUTHORIZATION_URL` |
-| Token endpoint         | `ACCESS_TOKEN_URL`         |
-| Key endpoint (JWKS)    | `ACCESS_JWKS_URL`          |
+| Field in dashboard     | Variable                   | Lives in                    |
+| ---------------------- | -------------------------- | --------------------------- |
+| Client ID              | `ACCESS_CLIENT_ID`         | `wrangler.jsonc` vars       |
+| Client secret          | `ACCESS_CLIENT_SECRET`     | Worker secret               |
+| Authorization endpoint | `ACCESS_AUTHORIZATION_URL` | `wrangler.jsonc` vars       |
+| Token endpoint         | `ACCESS_TOKEN_URL`         | `wrangler.jsonc` vars       |
+| Key endpoint (JWKS)    | `ACCESS_JWKS_URL`          | `wrangler.jsonc` vars       |
 
 ### 3. Set Worker secrets
 
+1Password is the source of truth: the item `productive-mcp` in vault `Infra - L7` holds every value
+(secrets and config), one field per variable. `.env.tpl` lists the three secrets as `op://`
+references. Change a secret in 1Password, then push it:
+
 ```sh
-# Productive
-wrangler secret put PRODUCTIVE_ORG_ID
-wrangler secret put USER_MAPPING < users.json
-
-# Access for SaaS
-wrangler secret put ACCESS_CLIENT_ID
-wrangler secret put ACCESS_CLIENT_SECRET
-wrangler secret put ACCESS_AUTHORIZATION_URL
-wrangler secret put ACCESS_TOKEN_URL
-wrangler secret put ACCESS_JWKS_URL
-
-# Signing key for the OAuth state
-openssl rand -hex 32 | wrangler secret put COOKIE_ENCRYPTION_KEY
+op read "op://Infra - L7/productive-mcp/USER_MAPPING" | wrangler secret put USER_MAPPING
+op read "op://Infra - L7/productive-mcp/ACCESS_CLIENT_SECRET" | wrangler secret put ACCESS_CLIENT_SECRET
+op read "op://Infra - L7/productive-mcp/COOKIE_ENCRYPTION_KEY" | wrangler secret put COOKIE_ENCRYPTION_KEY
 ```
 
-`users.json`:
+`COOKIE_ENCRYPTION_KEY` is `openssl rand -hex 32`. `USER_MAPPING` is single-line JSON:
 
 ```json
-{
-  "alice@example.com": { "userId": 123456, "apiToken": "alice-token" },
-  "bob@example.com": { "userId": 234567, "apiToken": "bob-token" }
-}
+{"alice@example.com":{"userId":123456,"apiToken":"alice-token","isAdmin":true},"bob@example.com":{"userId":234567,"apiToken":"bob-token"}}
 ```
 
 Email keys are looked up case-insensitively (lowercased).

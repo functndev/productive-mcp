@@ -1,13 +1,17 @@
-type EnvMap = Record<string, string>;
+import wrangler from "../wrangler.jsonc";
 
-const token = process.env.PRODUCTIVE_API_TOKEN;
-const orgId = process.env.PRODUCTIVE_ORG_ID;
+// The admin's token from USER_MAPPING (.env), the org ID from wrangler.jsonc vars.
+const mapping: Record<string, { apiToken?: string; isAdmin?: boolean }> = JSON.parse(
+  process.env.USER_MAPPING ?? "{}",
+);
+const token =
+  process.env.PRODUCTIVE_API_TOKEN ??
+  Object.values(mapping).find((entry) => entry.isAdmin)?.apiToken;
+const orgId: string = wrangler.vars.PRODUCTIVE_ORG_ID;
 const baseUrl = "https://api.productive.io/api/v2/".replace(/\/?$/, "/");
 
-if (!token || !orgId) {
-  console.error(
-    "Missing PRODUCTIVE_API_TOKEN/PRODUCTIVE_ADMIN_API_TOKEN or PRODUCTIVE_ORG_ID in .env",
-  );
+if (!token) {
+  console.error("No admin in USER_MAPPING (.env) and no PRODUCTIVE_API_TOKEN set");
   process.exit(1);
 }
 
