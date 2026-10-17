@@ -174,3 +174,6 @@ dist
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# cf CLI generated types and build output
+.cloudflare/

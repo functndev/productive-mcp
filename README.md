@@ -29,10 +29,10 @@ Flow:
 ### 1. Create the KV namespace
 
 ```sh
-npx wrangler kv namespace create OAUTH_KV
+bunx cf kv namespaces create --title OAUTH_KV
 ```
 
-Copy the resulting id into [wrangler.jsonc](wrangler.jsonc) (replacing `<Add-KV-ID>`).
+Put the resulting id into the `OAUTH_KV` binding in [cloudflare.config.ts](cloudflare.config.ts).
 
 ### 2. Create an Access for SaaS OIDC application
 
@@ -44,15 +44,15 @@ In the Cloudflare dashboard: **Zero Trust → Access → Applications → Add an
 - Configure Access policies (e.g. emails on your domain).
 
 Copy these from the OIDC settings into the 1Password item `productive-mcp` (vault `Infra - L7`).
-Only the client secret is a Worker secret; the rest is plain config in `wrangler.jsonc` `vars`:
+Only the client secret is a Worker secret; the rest is plain config in `cloudflare.config.ts`:
 
 | Field in dashboard     | Variable                   | Lives in                    |
 | ---------------------- | -------------------------- | --------------------------- |
-| Client ID              | `ACCESS_CLIENT_ID`         | `wrangler.jsonc` vars       |
+| Client ID              | `ACCESS_CLIENT_ID`         | `cloudflare.config.ts`      |
 | Client secret          | `ACCESS_CLIENT_SECRET`     | Worker secret               |
-| Authorization endpoint | `ACCESS_AUTHORIZATION_URL` | `wrangler.jsonc` vars       |
-| Token endpoint         | `ACCESS_TOKEN_URL`         | `wrangler.jsonc` vars       |
-| Key endpoint (JWKS)    | `ACCESS_JWKS_URL`          | `wrangler.jsonc` vars       |
+| Authorization endpoint | `ACCESS_AUTHORIZATION_URL` | `cloudflare.config.ts`      |
+| Token endpoint         | `ACCESS_TOKEN_URL`         | `cloudflare.config.ts`      |
+| Key endpoint (JWKS)    | `ACCESS_JWKS_URL`          | `cloudflare.config.ts`      |
 
 ### 3. Set Worker secrets
 
@@ -61,9 +61,10 @@ Only the client secret is a Worker secret; the rest is plain config in `wrangler
 references. Change a secret in 1Password, then push it:
 
 ```sh
-op read "op://Infra - L7/productive-mcp/USER_MAPPING" | wrangler secret put USER_MAPPING
-op read "op://Infra - L7/productive-mcp/ACCESS_CLIENT_SECRET" | wrangler secret put ACCESS_CLIENT_SECRET
-op read "op://Infra - L7/productive-mcp/COOKIE_ENCRYPTION_KEY" | wrangler secret put COOKIE_ENCRYPTION_KEY
+for name in USER_MAPPING ACCESS_CLIENT_SECRET COOKIE_ENCRYPTION_KEY; do
+  bunx cf workers secrets update "$name" --worker productive-mcp \
+    --text "$(op read "op://Infra - L7/productive-mcp/$name")"
+done
 ```
 
 `COOKIE_ENCRYPTION_KEY` is `openssl rand -hex 32`. `USER_MAPPING` is single-line JSON:
@@ -76,12 +77,12 @@ Email keys are looked up case-insensitively (lowercased).
 
 ## Local development
 
-Secrets live in 1Password (vault `Infra - L7`, item `productive-mcp`). `.env.tpl` lists every variable as an `op://` reference; write `.env` from it, then:
+Secrets live in 1Password (vault `Infra - L7`, item `productive-mcp`). `.env.tpl` lists the secrets as `op://` references; write `.env` from it, then:
 
 ```sh
 op inject -f -i .env.tpl -o .env
 npm install
-npm run dev
+npm run dev      # cf dev
 ```
 
 A real Access for SaaS app is still required for the OAuth dance to work locally. Either add `http://localhost:8787/callback` as a redirect URL on your existing app, or create a separate dev app.
@@ -89,7 +90,7 @@ A real Access for SaaS app is still required for the OAuth dance to work locally
 ## Deploying
 
 ```sh
-npm run deploy
+npm run deploy   # cf deploy; config in cloudflare.config.ts
 ```
 
 ## Connecting Claude Desktop / other MCP clients

@@ -1,19 +1,19 @@
-import wrangler from "../wrangler.jsonc";
+import config from "../cloudflare.config";
 
-// The admin's token from USER_MAPPING (.env), the org ID from wrangler.jsonc vars.
+// The admin's token from USER_MAPPING (.env), the org ID from cloudflare.config.ts.
 const mapping: Record<string, { apiToken?: string; isAdmin?: boolean }> = JSON.parse(
   process.env.USER_MAPPING ?? "{}",
 );
-const token =
+const adminToken =
   process.env.PRODUCTIVE_API_TOKEN ??
   Object.values(mapping).find((entry) => entry.isAdmin)?.apiToken;
-const orgId: string = wrangler.vars.PRODUCTIVE_ORG_ID;
-const baseUrl = "https://api.productive.io/api/v2/".replace(/\/?$/, "/");
-
-if (!token) {
+if (!adminToken) {
   console.error("No admin in USER_MAPPING (.env) and no PRODUCTIVE_API_TOKEN set");
   process.exit(1);
 }
+const token: string = adminToken;
+const orgId = config.worker.env.PRODUCTIVE_ORG_ID.value;
+const baseUrl = "https://api.productive.io/api/v2/".replace(/\/?$/, "/");
 
 async function main() {
   // Per OpenAPI spec (filter_person.person_type), values are
