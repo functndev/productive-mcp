@@ -277,7 +277,8 @@ export class ProductiveAPIClient {
     const queryParams = new URLSearchParams();
 
     if (params?.board_id) {
-      queryParams.append("filter[board_id]", params.board_id);
+      // The endpoint rejects filter[board_id]; folder_id is its documented alias.
+      queryParams.append("filter[folder_id]", params.board_id);
     }
 
     if (params?.limit) {

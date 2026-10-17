@@ -165,6 +165,17 @@ describe('list_tasks', () => {
   });
 });
 
+describe('list_task_lists', () => {
+  test('filters by the folder alias for a board', async () => {
+    const calls = mockProductive({ 'GET task_lists': () => ({ data: [] }) });
+    const result = await callTool('list_task_lists', { board_id: '892791' });
+
+    expect(result.isError).toBeUndefined();
+    expect(calls[0]!.url.searchParams.get('filter[folder_id]')).toBe('892791');
+    expect(calls[0]!.url.searchParams.get('filter[board_id]')).toBeNull();
+  });
+});
+
 describe('update_task', () => {
   test('applies each requested change through its own implementation', async () => {
     const calls = mockProductive({ 'PATCH tasks/1': (call) => task(call.body.data.attributes) });
