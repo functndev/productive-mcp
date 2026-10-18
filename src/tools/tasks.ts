@@ -255,10 +255,19 @@ export async function getTaskTool(
   }
 }
 
+// Productive turns tags outside its allow-list (and unknown attributes) into literal text. Its
+// strikethrough is <del>; <s> and <strike> would show up as "<s>…</s>" in the task.
+const DESCRIPTION_HTML_HINT =
+  'HTML: <p>, <h1>–<h3>, <strong>, <em>, <u>, <del>, <ul>, <ol>, <li>, <a href="">, <code>, <pre>, <blockquote>, <table>, <br>, <hr>. Other tags and attributes show up as literal text. Wins over description';
+
+function normalizeTaskHtml(html: string): string {
+  return html.replace(/<(\/?)(?:s|strike)(?=[\s>/])/gi, '<$1del');
+}
+
 export const createTaskSchema = z.object({
   title: z.string().min(1, 'Task title is required'),
   description: z.string().optional().describe('Plain text'),
-  description_html: z.string().optional().describe('HTML (<h2>, <p>, <ul>, <li>, <strong>, <em>, <a href="">); wins over description'),
+  description_html: z.string().optional().describe(DESCRIPTION_HTML_HINT),
   project_id: z.string().optional(),
   task_list_id: z.string().min(1, 'task_list_id is required by the Productive API').describe('Required; find one with list_task_lists'),
   assignee_id: z.string().optional().describe('Person ID, or "me"'),
@@ -287,7 +296,7 @@ export async function createTaskTool(
     }
     
     // Use description_html if provided, otherwise fall back to description
-    const descriptionValue = params.description_html || params.description;
+    const descriptionValue = params.description_html ? normalizeTaskHtml(params.description_html) : params.description;
 
     const taskData = {
       data: {
@@ -497,7 +506,7 @@ export async function updateTaskDetailsTool(
 
     // Use description_html if provided, otherwise fall back to description
     if (params.description_html !== undefined) {
-      taskUpdate.data.attributes!.description = params.description_html;
+      taskUpdate.data.attributes!.description = normalizeTaskHtml(params.description_html);
     } else if (params.description !== undefined) {
       taskUpdate.data.attributes!.description = params.description;
     }
@@ -586,7 +595,7 @@ export const updateTaskSchema = z.object({
   task_id: z.string().min(1, 'Task ID is required'),
   title: z.string().min(1, 'Task title cannot be empty').optional(),
   description: z.string().optional().describe('Plain text; "" clears it'),
-  description_html: z.string().optional().describe('HTML (<h2>, <p>, <ul>, <li>, <strong>, <em>, <a href="">); wins over description'),
+  description_html: z.string().optional().describe(DESCRIPTION_HTML_HINT),
   status_name: z.string().optional().describe('Workflow status by name, e.g. "In Progress", "Done" (case-insensitive, partial match; lists the options if ambiguous)'),
   workflow_status_id: z.string().optional().describe('Exact workflow status ID, instead of status_name'),
   assignee_id: z.string().optional().describe('Person ID, "me", or "null" to unassign'),

@@ -242,6 +242,30 @@ describe('folders instead of boards', () => {
   });
 });
 
+describe('task description HTML', () => {
+  // Productive escapes <s> and <strike> into literal text and keeps only <del>.
+  const html = '<p><s>done</s>, <STRIKE class="x">gone</STRIKE>, <span>kept</span>, <strong>kept</strong></p>';
+  const expected = '<p><del>done</del>, <del class="x">gone</del>, <span>kept</span>, <strong>kept</strong></p>';
+
+  test('create_task sends strikethrough as <del>', async () => {
+    const calls = mockProductive({ 'POST tasks': () => task() });
+    await callTool('create_task', { title: 'Fix login', task_list_id: '5', description_html: html });
+    expect(calls[0]!.body.data.attributes.description).toBe(expected);
+  });
+
+  test('update_task sends strikethrough as <del>', async () => {
+    const calls = mockProductive({ 'PATCH tasks/1': (call) => task(call.body.data.attributes) });
+    await callTool('update_task', { task_id: '1', description_html: html });
+    expect(calls[0]!.body.data.attributes.description).toBe(expected);
+  });
+
+  test('a plain-text description is sent unchanged', async () => {
+    const calls = mockProductive({ 'POST tasks': () => task() });
+    await callTool('create_task', { title: 'Fix login', task_list_id: '5', description: 'use <s> tags' });
+    expect(calls[0]!.body.data.attributes.description).toBe('use <s> tags');
+  });
+});
+
 describe('list_project_deals', () => {
   test('filters deals vs. budgets with filter[type] and labels them from the budget flag', async () => {
     const calls = mockProductive({
