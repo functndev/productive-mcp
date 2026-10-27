@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: setup node (required by cf CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: typecheck
+        run: bun run types && bun run type-check
+
+      - name: test
+        run: bun test
