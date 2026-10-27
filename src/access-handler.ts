@@ -34,6 +34,7 @@ export function parseUserMapping(raw: string | undefined): UserMapping {
   } catch (err) {
     throw new Error(
       `USER_MAPPING is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {

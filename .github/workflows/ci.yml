@@ -27,5 +27,8 @@ jobs:
       - name: typecheck
         run: bun run types && bun run type-check
 
+      - name: lint
+        run: bun run lint
+
       - name: test
         run: bun test

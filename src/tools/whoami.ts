@@ -37,7 +37,7 @@ When you use "me" in any command, it refers to this user.`,
           }],
         };
       }
-    } catch (error) {
+    } catch {
       // If we can't fetch user details, just show the ID
     }
     

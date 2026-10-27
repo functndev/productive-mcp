@@ -15,7 +15,7 @@ export async function moveTaskToList(
     const { task_id, task_list_id } = moveTaskToListSchema.parse(args);
     
     // Update the task's task_list relationship
-    const response = await client.updateTask(task_id, {
+    await client.updateTask(task_id, {
       data: {
         type: 'tasks',
         id: task_id,

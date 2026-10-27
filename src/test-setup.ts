@@ -2,6 +2,7 @@
 import { mock } from 'bun:test';
 
 mock.module('cloudflare:workers', () => ({
+  // oxlint-disable-next-line typescript/no-extraneous-class
   WorkerEntrypoint: class WorkerEntrypoint {},
 }));
 
