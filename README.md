@@ -89,9 +89,10 @@ A real Access for SaaS app is still required for the OAuth dance to work locally
 
 ## Deploying
 
-```sh
-npm run deploy   # cf deploy; config in cloudflare.config.ts
-```
+Every push to `main` deploys through the GitHub Actions workflow `deploy.yml` (typecheck, tests, then
+`bun run deploy` = `cf deploy`); pull requests run the same checks in `ci.yml`. The repo secret
+`CF_API_TOKEN` (the shared Functn deploy token, see monitoring.functn.com `docs/secret-management.md`)
+must be set. Config is in `cloudflare.config.ts`. Manual deploy from a laptop: `bun run deploy`.
 
 ## Connecting Claude Desktop / other MCP clients
 

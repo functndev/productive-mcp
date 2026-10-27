@@ -1,0 +1,44 @@
+name: Deploy productive-mcp.functn.com
+
+# Every push to main is checked and deployed.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never two deploys at once; a newer push waits its turn.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CI: true
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: e44540d8d3d22a5ebbadc5f131aeecd5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: setup node (required by cf CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: typecheck
+        run: bun run types && bun run type-check
+
+      - name: test
+        run: bun test
+
+      - name: deploy
+        run: bun run deploy
