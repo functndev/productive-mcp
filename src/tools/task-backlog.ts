@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { ProductiveTaskList } from '../api/types.js';
 import { McpError, ErrorCode } from '../errors.js';
 
 const addToBacklogSchema = z.object({

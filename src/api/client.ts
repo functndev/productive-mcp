@@ -94,7 +94,7 @@ export class ProductiveAPIClient {
       if (error instanceof Error) {
         throw error;
       }
-      throw new Error("Unknown error occurred while making API request");
+      throw new Error("Unknown error occurred while making API request", { cause: error });
     }
   }
 
@@ -871,7 +871,7 @@ export class ProductiveAPIClient {
       // For any other success response with content, try to parse JSON
       try {
         return await response.json();
-      } catch (e) {
+      } catch {
         // If parsing fails but status was success, return a minimal success object
         return {
           success: true,

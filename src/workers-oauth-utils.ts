@@ -1,10 +1,7 @@
 // workers-oauth-utils.ts
 // OAuth utility functions with CSRF and state validation security fixes
 
-import type {
-  AuthRequest,
-  ClientInfo,
-} from "@cloudflare/workers-oauth-provider";
+import type { AuthRequest } from "@cloudflare/workers-oauth-provider";
 
 /**
  * OAuth 2.1 compliant error class.

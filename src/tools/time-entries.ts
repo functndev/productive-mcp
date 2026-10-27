@@ -47,7 +47,6 @@ function parseDate(dateInput: string): string {
   // Validate YYYY-MM-DD format
   const dateMatch = input.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (dateMatch) {
-    const year = parseInt(dateMatch[1], 10);
     const month = parseInt(dateMatch[2], 10);
     const day = parseInt(dateMatch[3], 10);
     

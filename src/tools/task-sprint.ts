@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { ProductiveTask } from '../api/types.js';
 import { McpError, ErrorCode } from '../errors.js';
 
 // Sprint mapping: S01-S10 to their corresponding IDs

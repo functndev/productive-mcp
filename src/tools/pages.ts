@@ -218,7 +218,8 @@ export async function createPageTool(
       } catch (error) {
         throw new Error(
           `Page ${page.id} was created, but setting its body failed: ` +
-          `${error instanceof Error ? error.message : String(error)}. Retry with update_page.`
+          `${error instanceof Error ? error.message : String(error)}. Retry with update_page.`,
+          { cause: error },
         );
       }
     }

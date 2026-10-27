@@ -6,6 +6,7 @@
     "deploy": "cf deploy",
     "dev": "cf dev",
     "format": "oxfmt --write .",
+    "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "start": "cf dev",
     "type-check": "tsc --noEmit",
