@@ -1,5 +1,5 @@
 // The OAuth provider configuration (what clients discover) and the checks run on every refresh.
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { OAuthError } from '@cloudflare/workers-oauth-provider';
 import { recheckOnRefresh } from './access-handler.js';
 import worker from './index.js';
@@ -64,9 +64,18 @@ describe('discovery', () => {
 
 describe('recheckOnRefresh', () => {
   const realFetch = globalThis.fetch;
+  let info: ReturnType<typeof spyOn>;
+  let warn: ReturnType<typeof spyOn>;
+  beforeEach(() => {
+    info = spyOn(console, 'info').mockImplementation(() => {});
+    warn = spyOn(console, 'warn').mockImplementation(() => {});
+  });
   afterEach(() => {
     globalThis.fetch = realFetch;
+    info.mockRestore();
+    warn.mockRestore();
   });
+  const refreshLine = () => JSON.parse(String(info.mock.calls.at(-1)?.[0]));
 
   const grant = (extra: Partial<Props> = {}): Props => ({
     accessToken: 'old',
@@ -106,10 +115,19 @@ describe('recheckOnRefresh', () => {
     expect(newProps.productiveApiToken).toBe('rotated-token');
     expect(newProps.adminApiToken).toBe('admin-token');
     expect(newProps.accessRefreshToken).toBe('access-2');
+    expect(refreshLine()).toMatchObject({ event: 'oauth.refresh', actor: 'me@functn.com', granted: true, accessRotated: true });
+    expect(JSON.stringify(info.mock.calls)).not.toContain('access-2');
   });
 
   test('revokes the grant of a user removed from USER_MAPPING', async () => {
     expect(await oauthCode(refresh(grant({ email: 'gone@functn.com', accessRefreshToken: 'a' })))).toBe('invalid_grant');
+    expect(refreshLine()).toMatchObject({
+      event: 'oauth.refresh',
+      actor: 'gone@functn.com',
+      granted: false,
+      reason: 'not_in_user_mapping',
+      result: 'ok',
+    });
   });
 
   test('re-checks Cloudflare Access with the stored refresh token', async () => {
@@ -128,6 +146,8 @@ describe('recheckOnRefresh', () => {
   test('keeps the grant when Access is unreachable', async () => {
     accessAnswers(new Error('network down'));
     expect(await oauthCode(refresh(grant({ accessRefreshToken: 'access-1' })))).toBe('temporarily_unavailable');
+    expect(JSON.parse(String(warn.mock.calls.at(-1)?.[0]))).toMatchObject({ event: 'oauth.access_unavailable' });
+    expect(refreshLine()).toMatchObject({ granted: false, reason: 'access_unavailable' });
     accessAnswers(new Response('oops', { status: 502 }));
     expect(await oauthCode(refresh(grant({ accessRefreshToken: 'access-1' })))).toBe('temporarily_unavailable');
   });

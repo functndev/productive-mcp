@@ -23,10 +23,9 @@ export function parseConfig(env: Record<string, unknown>): Config {
   const result = configSchema.safeParse(env);
 
   if (!result.success) {
-    console.error("Configuration validation failed:", result.error.format());
-    throw new Error(
-      "Invalid configuration. Please check your environment variables.",
-    );
+    // Field names and messages only: the values include API tokens.
+    const issues = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    throw new Error(`Invalid configuration (${issues}). Please check your environment variables.`);
   }
 
   return result.data;

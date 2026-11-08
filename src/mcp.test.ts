@@ -317,21 +317,105 @@ describe('update_task', () => {
 });
 
 describe('logging', () => {
-  let log: ReturnType<typeof spyOn>;
+  type Line = Record<string, unknown> & { level: string };
+  let spies: Array<ReturnType<typeof spyOn>>;
   beforeEach(() => {
-    log = spyOn(console, 'log').mockImplementation(() => {});
+    spies = (['info', 'warn', 'error'] as const).map((level) => spyOn(console, level).mockImplementation(() => {}));
   });
-  afterEach(() => log.mockRestore());
+  afterEach(() => spies.forEach((spy) => spy.mockRestore()));
+  /** Every line written so far, in order, with the console method as `level`. */
+  const lines = (): Line[] =>
+    spies
+      .flatMap((spy, i) =>
+        spy.mock.calls.map((call: unknown[], n: number) => ({
+          order: spy.mock.invocationCallOrder[n]!,
+          line: { level: ['info', 'warn', 'error'][i]!, ...JSON.parse(String(call[0])) } as Line,
+        }))
+      )
+      .sort((x, y) => x.order - y.order)
+      .map(({ line }) => line);
 
-  test('every tool call logs one tool_call line with its outcome', async () => {
+  test('a tool call is one mcp.tool line with the actor, its ids and its Productive calls', async () => {
     mockProductive({ 'GET tasks': () => ({ data: [] }) });
-    await callTool('list_tasks', {});
-    await callTool('update_task', { task_id: '1' });
-
-    const lines: Array<Record<string, unknown>> = log.mock.calls.map((call: unknown[]) => JSON.parse(String(call[0])));
-    expect(lines.map(({ event, tool, outcome, userEmail }) => ({ event, tool, outcome, userEmail }))).toEqual([
-      { event: 'tool_call', tool: 'list_tasks', outcome: 'ok', userEmail: 'me@functn.com' },
-      { event: 'tool_call', tool: 'update_task', outcome: 'error', userEmail: 'me@functn.com' },
+    await callTool('list_tasks', { project_id: '7' });
+    expect(lines()).toEqual([
+      expect.objectContaining({
+        level: 'info',
+        event: 'mcp.tool',
+        tool: 'list_tasks',
+        actor: 'me@functn.com',
+        actorPersonId: '123',
+        projectId: '7',
+        productiveCalls: 1,
+        result: 'ok',
+      }),
     ]);
+  });
+
+  test('logs what a write changed, never the content it wrote', async () => {
+    mockProductive({ 'PATCH tasks/1': () => task({ title: 'Secret plan' }) });
+    await callTool('update_task', { task_id: '1', title: 'Secret plan' });
+    const [line] = lines();
+    expect(line).toMatchObject({ event: 'mcp.tool', taskId: '1', writes: ['PATCH tasks/1'], result: 'ok' });
+    expect(JSON.stringify(line)).not.toContain('Secret plan');
+  });
+
+  test('bad input is a tool error, not a failure', async () => {
+    mockProductive({});
+    await callTool('update_task', { task_id: '1' });
+    expect(lines()).toEqual([
+      expect.objectContaining({ level: 'info', event: 'mcp.tool', toolError: 'invalid_params', result: 'ok' }),
+    ]);
+  });
+
+  test('a Productive 4xx is a warn line and a tool error', async () => {
+    mockProductive({ 'GET tasks/9': () => Response.json({ errors: [{ detail: 'The requested record was not found' }] }, { status: 404 }) });
+    const result = await callTool('get_task', { task_id: '9' });
+    expect(result.isError).toBe(true);
+    expect(lines()).toEqual([
+      expect.objectContaining({ level: 'warn', event: 'productive.request_failed', httpMethod: 'GET', path: 'tasks/9', status: 404 }),
+      expect.objectContaining({
+        level: 'info',
+        event: 'mcp.tool',
+        toolError: 'productive_404',
+        productiveFailures: 1,
+        productiveStatus: 404,
+        result: 'ok',
+      }),
+    ]);
+  });
+
+  test('a Productive 5xx or 429 fails the call at error', async () => {
+    mockProductive({ 'GET tasks': () => new Response('busy', { status: 429, headers: { 'retry-after': '10' } }) });
+    const result = await callTool('list_tasks', {});
+    expect(result.isError).toBe(true);
+    expect(lines()).toEqual([
+      expect.objectContaining({ level: 'warn', event: 'productive.rate_limited', status: 429, retryAfter: '10' }),
+      expect.objectContaining({
+        level: 'error',
+        event: 'mcp.tool',
+        tool: 'list_tasks',
+        productiveStatus: 429,
+        result: 'failed',
+        error: expect.objectContaining({ message: 'API request failed with status 429' }),
+      }),
+    ]);
+  });
+
+  test('a call that saved some changes before failing is partial', async () => {
+    let patches = 0;
+    mockProductive({
+      'PATCH tasks/1': () =>
+        ++patches === 1 ? task({ title: 'Renamed' }) : Response.json({ errors: [{ detail: 'assignee not found' }] }, { status: 422 }),
+    });
+    await callTool('update_task', { task_id: '1', title: 'Renamed', assignee_id: '999' });
+    expect(lines().slice(-1)[0]).toMatchObject({
+      level: 'warn',
+      event: 'mcp.tool',
+      writes: ['PATCH tasks/1'],
+      toolError: 'productive_422',
+      toolMessage: 'assignee not found',
+      result: 'partial',
+    });
   });
 });

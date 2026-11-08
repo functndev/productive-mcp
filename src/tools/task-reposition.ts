@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ProductiveAPIClient } from '../api/client.js';
 import type { TaskReposition } from '../api/types.js';
+import { getUnit } from '../lib/log.js';
 
 export const taskRepositionSchema = z.object({
   taskId: z.string().describe('The ID of the task to reposition'),
@@ -24,7 +25,7 @@ export const repositionTask = async (
   
   // If we can't find the task list ID, we'll try a different approach
   if (!taskListId) {
-    console.warn('Task list ID not found for task', taskId);
+    getUnit()?.set({ repositionFallback: 'no_task_list' });
     
     // Get all tasks and try to find suitable ones to position against
     const allTasks = await apiClient.listTasks({
@@ -115,7 +116,7 @@ export const repositionTask = async (
   }
   
   // As a last resort, try default API behavior with empty attributes
-  console.warn('Using default repositioning with empty attributes');
+  getUnit()?.set({ repositionFallback: 'default' });
   return await apiClient.repositionTask(taskId, {});
 };
 
@@ -157,13 +158,7 @@ Position updated according to the requested parameters.`,
       };
     }
   } catch (error) {
-    // Handle errors more gracefully
-    console.error('Error in taskRepositionTool:', error);
-    return {
-      content: [{
-        type: 'text',
-        text: `Error repositioning task: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
-      }],
-    };
+    // Thrown, not returned as text: the model (and runSteps in update_task) must see the failure.
+    throw new Error(`Error repositioning task: ${error instanceof Error ? error.message : 'Unknown error occurred'}`, { cause: error });
   }
 };

@@ -4,6 +4,7 @@ import { handleAccessRequest, recheckOnRefresh } from "./access-handler.js";
 import { allowedRegistration, isAllowedRedirectUri } from "./clients.js";
 import type { Props } from "./workers-oauth-utils.js";
 import { createMcpServer } from "./mcp.js";
+import { log, unit } from "./lib/log.js";
 import { parseConfig, type Config } from "./config/index.js";
 import {
   ATTACHMENT_PATH_PREFIX,
@@ -95,6 +96,19 @@ function getProvider(env: Env): OAuthProvider<Env> {
         ? undefined
         : { code: "invalid_redirect_uri", description: "Only Claude and local MCP clients may register with this server." },
     tokenExchangeCallback: recheckOnRefresh,
+    // Instead of the library's plain-text "OAuth error response" warn. Refusals from
+    // recheckOnRefresh are already on its oauth.refresh line.
+    onError: ({ status, code, description, internal }) => {
+      if (internal.category === "token-exchange-callback") return;
+      log.warn("oauth.error_response", {
+        status,
+        code,
+        description,
+        category: internal.category,
+        reason: internal.reason,
+        ...(internal.detail instanceof Error && { error: internal.detail }),
+      });
+    },
   });
   return provider;
 }
@@ -106,9 +120,19 @@ export default {
 
   // Daily sweep of expired OAuth records, resuming where the previous run stopped.
   async scheduled(_controller, env) {
-    const cursor = (await env.OAUTH_KV.get("purge-cursor")) ?? undefined;
-    const result = await getProvider(env).purgeExpiredData(env, { batchSize: 100, cursor });
-    if (result.cursor) await env.OAUTH_KV.put("purge-cursor", result.cursor);
-    else await env.OAUTH_KV.delete("purge-cursor");
+    await unit("oauth.purge", { actor: "system:productive-mcp" }, async (u) => {
+      const cursor = (await env.OAUTH_KV.get("purge-cursor")) ?? undefined;
+      const result = await getProvider(env).purgeExpiredData(env, { batchSize: 100, cursor });
+      if (result.cursor) await env.OAUTH_KV.put("purge-cursor", result.cursor);
+      else await env.OAUTH_KV.delete("purge-cursor");
+      u.set({
+        resumed: Boolean(cursor),
+        grantsChecked: result.grantsChecked,
+        grantsPurged: result.grantsPurged,
+        tokensChecked: result.tokensChecked,
+        tokensPurged: result.tokensPurged,
+        done: result.done,
+      });
+    });
   },
 } satisfies ExportedHandler<Env>;

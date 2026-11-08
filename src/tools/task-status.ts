@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
+import { productiveFetch } from '../api/fetch.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveTaskUpdate, ProductiveIncludedResource } from '../api/types.js';
 import type { Config } from '../config/index.js';
@@ -26,7 +27,7 @@ async function resolveWorkflowStatuses(
   };
 
   // Step 1: Get the task with project included to find its project ID
-  const taskRes = await fetch(
+  const taskRes = await productiveFetch(
     `${cfg.PRODUCTIVE_API_BASE_URL}tasks/${taskId}?include=project`,
     { headers }
   );
@@ -36,11 +37,11 @@ async function resolveWorkflowStatuses(
   const taskData = (await taskRes.json()) as { data?: { relationships?: { project?: { data?: { id?: string } } } } };
   const projectId = taskData.data?.relationships?.project?.data?.id;
   if (!projectId) {
-    throw new Error('Task has no project assigned');
+    throw new McpError(ErrorCode.InvalidRequest, 'Task has no project assigned');
   }
 
   // Step 2: Get the project with workflow included to find workflow_id
-  const projRes = await fetch(
+  const projRes = await productiveFetch(
     `${cfg.PRODUCTIVE_API_BASE_URL}projects/${projectId}?include=workflow`,
     { headers }
   );
@@ -50,11 +51,11 @@ async function resolveWorkflowStatuses(
   const projData = (await projRes.json()) as { data?: { relationships?: { workflow?: { data?: { id?: string } } } } };
   const workflowId = projData.data?.relationships?.workflow?.data?.id;
   if (!workflowId) {
-    throw new Error('Project has no workflow configured');
+    throw new McpError(ErrorCode.InvalidRequest, 'Project has no workflow configured');
   }
 
   // Step 3: List all statuses in this workflow
-  const statusRes = await fetch(
+  const statusRes = await productiveFetch(
     `${cfg.PRODUCTIVE_API_BASE_URL}workflow_statuses?filter[workflow_id]=${workflowId}&page[size]=200`,
     { headers }
   );

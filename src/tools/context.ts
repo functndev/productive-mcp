@@ -27,7 +27,7 @@ export const result = async (pending: Promise<unknown>): Promise<CallToolResult>
 /** Resolves "me" to the signed-in user's person ID; other values pass through. */
 export function resolveMe(id: string, config: Config): string {
   if (id !== 'me') return id;
-  if (!config.PRODUCTIVE_USER_ID) throw new Error('"me" is not available: no Productive user is linked to this sign-in');
+  if (!config.PRODUCTIVE_USER_ID) throw new McpError(ErrorCode.InvalidRequest, '"me" is not available: no Productive user is linked to this sign-in');
   return config.PRODUCTIVE_USER_ID;
 }
 

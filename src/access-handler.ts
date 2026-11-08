@@ -12,6 +12,7 @@ import {
   type Props,
   validateOAuthState,
 } from "./workers-oauth-utils.js";
+import { log, unit } from "./lib/log.js";
 
 type EnvWithOauth = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
@@ -100,8 +101,11 @@ export async function handleAccessRequest(
       oauthReqInfo = result.oauthReqInfo;
       codeVerifier = result.codeVerifier;
     } catch (error: any) {
-      if (error instanceof OAuthError) return error.toResponse();
-      return new Response("Internal server error", { status: 500 });
+      if (error instanceof OAuthError) {
+        log.warn("mcp.sign_in_refused", { reason: error.message });
+        return error.toResponse();
+      }
+      throw error;
     }
 
     if (!oauthReqInfo.clientId) {
@@ -116,7 +120,10 @@ export async function handleAccessRequest(
       upstream_url: env.ACCESS_TOKEN_URL,
       code_verifier: codeVerifier,
     });
-    if (upstream.error) return upstream.error;
+    if (upstream.error) {
+      log.warn("mcp.sign_in_refused", { reason: "access_code_exchange_failed", status: upstream.error.status });
+      return upstream.error;
+    }
     const { accessToken, idToken, refreshToken } = upstream;
 
     const idTokenClaims = await verifyToken(env, idToken);
@@ -125,6 +132,7 @@ export async function handleAccessRequest(
     const sub = String(idTokenClaims.sub ?? "");
 
     if (!email) {
+      log.warn("mcp.sign_in_refused", { reason: "no_email_claim" });
       return new Response("Forbidden: ID token has no email claim", {
         status: 403,
       });
@@ -135,12 +143,13 @@ export async function handleAccessRequest(
     try {
       mapping = parseUserMapping(env.USER_MAPPING);
     } catch (err) {
-      console.error("USER_MAPPING configuration error:", err);
+      log.error("oauth.user_mapping_invalid", { actor: email, error: err });
       return new Response("Server misconfigured", { status: 500 });
     }
 
     const productive = lookupProductiveCredentials(email, mapping);
     if (!productive) {
+      log.warn("mcp.sign_in_refused", { actor: email, reason: "not_in_user_mapping" });
       return new Response(
         `Forbidden: ${email} is not authorized to use this MCP server`,
         { status: 403 },
@@ -149,9 +158,7 @@ export async function handleAccessRequest(
 
     // Without a refresh token the Access policy can't be re-checked on refresh (see
     // recheckOnRefresh), so the grant then only lives for a day.
-    if (!refreshToken) {
-      console.warn(`Cloudflare Access issued no refresh token for ${email}; grant limited to 24h`);
-    }
+    if (!refreshToken) log.warn("mcp.no_refresh_token", { actor: email });
 
     const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
       metadata: { label: name || email },
@@ -172,6 +179,12 @@ export async function handleAccessRequest(
       userId: sub,
     });
 
+    log.info("audit.mcp.sign_in", {
+      actor: email,
+      clientId: oauthReqInfo.clientId,
+      productivePersonId: productive.productiveUserId,
+      refreshable: Boolean(refreshToken),
+    });
     return Response.redirect(redirectTo, 302);
   }
 
@@ -253,7 +266,7 @@ async function verifyToken(env: Env, token: string) {
  * On every MCP token refresh (tokenExchangeCallback): re-read USER_MAPPING, so removed users lose
  * access and rotated Productive tokens take effect, and refresh the user's Cloudflare Access token,
  * which re-evaluates the Access policy. Throwing invalid_grant revokes the grant; the client then
- * signs in again.
+ * signs in again. Each refresh is one oauth.refresh unit: granted, or refused and why.
  */
 export async function recheckOnRefresh({
   grantType,
@@ -266,61 +279,77 @@ export async function recheckOnRefresh({
 }): Promise<{ newProps: Props } | undefined> {
   if (grantType !== "refresh_token") return undefined;
   const current = props as Props;
-  const signInAgain = (description: string) =>
-    new ProviderOAuthError("invalid_grant", { description });
+  // A refusal is the answer, not a failure: the unit logs it, and it is thrown to the library after.
+  let refusal: ProviderOAuthError | undefined;
+  const result = await unit("oauth.refresh", { actor: current.email }, async (u) => {
+    const refuse = (reason: string, error: ProviderOAuthError) => {
+      u.set({ granted: false, reason });
+      refusal = error;
+      return undefined;
+    };
+    const signInAgain = (reason: string, description: string) =>
+      refuse(reason, new ProviderOAuthError("invalid_grant", { description }));
+    const unavailable = () =>
+      refuse(
+        "access_unavailable",
+        new ProviderOAuthError("temporarily_unavailable", {
+          description: "Cloudflare Access is unavailable",
+          statusCode: 503,
+        }),
+      );
 
-  const mapping = parseUserMapping(env.USER_MAPPING);
-  const productive = lookupProductiveCredentials(current.email, mapping);
-  if (!productive) throw signInAgain(`${current.email} is no longer allowed to use this server`);
-  const next: Props = {
-    ...current,
-    productiveUserId: productive.productiveUserId,
-    productiveApiToken: productive.productiveApiToken,
-    adminApiToken: findAdminApiToken(mapping) ?? undefined,
-  };
+    const mapping = parseUserMapping(env.USER_MAPPING);
+    const productive = lookupProductiveCredentials(current.email, mapping);
+    if (!productive) {
+      return signInAgain("not_in_user_mapping", `${current.email} is no longer allowed to use this server`);
+    }
+    const next: Props = {
+      ...current,
+      productiveUserId: productive.productiveUserId,
+      productiveApiToken: productive.productiveApiToken,
+      adminApiToken: findAdminApiToken(mapping) ?? undefined,
+    };
 
-  if (!current.accessRefreshToken) {
-    // Grants from before this check carry neither field: they get the same day as a grant whose
-    // sign-in returned no refresh token, so everyone signs in again at most once.
-    const reauthBy = current.reauthBy ?? Date.now() + REAUTH_WITHOUT_REFRESH_MS;
-    if (Date.now() >= reauthBy) throw signInAgain("Sign in through Cloudflare Access again");
-    return { newProps: { ...next, reauthBy } };
-  }
+    if (!current.accessRefreshToken) {
+      // Grants from before this check carry neither field: they get the same day as a grant whose
+      // sign-in returned no refresh token, so everyone signs in again at most once.
+      const reauthBy = current.reauthBy ?? Date.now() + REAUTH_WITHOUT_REFRESH_MS;
+      if (Date.now() >= reauthBy) return signInAgain("reauth_due", "Sign in through Cloudflare Access again");
+      u.set({ granted: true, accessChecked: false });
+      return { newProps: { ...next, reauthBy } };
+    }
 
-  let response: Response;
-  try {
-    response = await fetch(env.ACCESS_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: current.accessRefreshToken,
-        client_id: env.ACCESS_CLIENT_ID,
-        client_secret: env.ACCESS_CLIENT_SECRET,
-      }).toString(),
-    });
-  } catch {
-    // Access unreachable: keep the grant, let the client retry.
-    throw new ProviderOAuthError("temporarily_unavailable", {
-      description: "Cloudflare Access is unavailable",
-      statusCode: 503,
-    });
-  }
-  if (response.status >= 400 && response.status < 500) {
-    console.warn(`Access refresh denied for ${current.email}: ${response.status}`);
-    throw signInAgain("Cloudflare Access no longer allows this user");
-  }
-  if (!response.ok) {
-    throw new ProviderOAuthError("temporarily_unavailable", {
-      description: "Cloudflare Access is unavailable",
-      statusCode: 503,
-    });
-  }
-  const body = (await response.json()) as { refresh_token?: string };
-  console.log(
-    `Token refresh for ${current.email}: Cloudflare Access re-check passed${body.refresh_token ? " (refresh token rotated)" : ""}`,
-  );
-  return {
-    newProps: { ...next, accessRefreshToken: body.refresh_token ?? current.accessRefreshToken },
-  };
+    let response: Response;
+    try {
+      response = await fetch(env.ACCESS_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: current.accessRefreshToken,
+          client_id: env.ACCESS_CLIENT_ID,
+          client_secret: env.ACCESS_CLIENT_SECRET,
+        }).toString(),
+      });
+    } catch (error) {
+      // Access unreachable: keep the grant, let the client retry.
+      log.warn("oauth.access_unavailable", { error });
+      return unavailable();
+    }
+    u.set({ accessStatus: response.status });
+    if (response.status >= 400 && response.status < 500) {
+      return signInAgain("access_denied", "Cloudflare Access no longer allows this user");
+    }
+    if (!response.ok) {
+      log.warn("oauth.access_unavailable", { status: response.status });
+      return unavailable();
+    }
+    const body = (await response.json()) as { refresh_token?: string };
+    u.set({ granted: true, accessChecked: true, accessRotated: Boolean(body.refresh_token) });
+    return {
+      newProps: { ...next, accessRefreshToken: body.refresh_token ?? current.accessRefreshToken },
+    };
+  });
+  if (refusal) throw refusal;
+  return result;
 }
