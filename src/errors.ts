@@ -1,7 +1,7 @@
 // Errors the tool handlers throw. McpServer turns any error thrown by a tool into an
 // isError result carrying its message, so the code only documents the kind of failure.
 
-import { getUnit, type Unit } from "./lib/log.js";
+import { getUnit, type ToolError, type Unit } from "./lib/log.js";
 
 export enum ErrorCode {
   InvalidRequest = -32600,
@@ -10,14 +10,7 @@ export enum ErrorCode {
 }
 
 /** A `toolError` kind (logging convention, "MCP tool calls"). */
-export type ToolErrorKind =
-  | "invalid_input"
-  | "not_found"
-  | "forbidden"
-  | "conflict"
-  | "upstream"
-  | "rate_limited"
-  | "not_configured";
+export type ToolErrorKind = ToolError;
 
 // Most tools catch everything and rethrow it as McpError(InternalError, message), so by the time
 // a throw reaches the mcp.tool unit its kind is gone. An McpError for bad input or a request the

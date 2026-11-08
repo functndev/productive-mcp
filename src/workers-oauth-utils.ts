@@ -2,44 +2,20 @@
 // OAuth utility functions with CSRF and state validation security fixes
 
 import type { AuthRequest } from "@cloudflare/workers-oauth-provider";
+import { HttpError } from "./lib/http-error.js";
 
 /**
- * OAuth 2.1 compliant error class.
- * Represents errors that occur during OAuth operations with standardized error codes and descriptions.
+ * How long a call to Cloudflare Access may take (functn-it stack/README.md, "Upstream calls"): a
+ * person waits for the sign-in, a client for its token refresh.
  */
-export class OAuthError extends Error {
-  /**
-   * Creates a new OAuthError
-   * @param code - The OAuth error code (e.g., "invalid_request", "invalid_grant")
-   * @param description - Human-readable error description
-   * @param statusCode - HTTP status code to return (defaults to 400)
-   */
-  constructor(
-    public code: string,
-    public description: string,
-    public statusCode = 400,
-  ) {
-    super(description);
-    this.name = "OAuthError";
-  }
+export const ACCESS_TIMEOUT_MS = 15_000;
 
-  /**
-   * Converts the error to a standardized OAuth error response
-   * @returns HTTP Response with JSON error body
-   */
-  toResponse(): Response {
-    return new Response(
-      JSON.stringify({
-        error: this.code,
-        error_description: this.description,
-      }),
-      {
-        status: this.statusCode,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-  }
-}
+/** What the person reads when the callback can't be tied to a sign-in: they can only start over. */
+const START_AGAIN =
+  "This sign-in link has expired or was already used. Start connecting to Productive again from Claude.";
+
+/** A callback that doesn't belong to a sign-in in progress: a refusal (400) with its reason. */
+const stateRefused = (reason: string) => new HttpError(400, START_AGAIN, { code: "invalid_input", reason });
 
 /**
  * Result from createOAuthState containing the state token and PKCE code challenge
@@ -112,7 +88,8 @@ export async function createOAuthState(
  * @param kv - Cloudflare KV namespace for storing OAuth state data
  * @param secret - Secret key used to verify the state token HMAC signature
  * @returns Object containing the original OAuth request info, PKCE code verifier, and cookie to clear
- * @throws {OAuthError} If state is missing, has an invalid signature, or is expired/not found in KV
+ * @throws {HttpError} 400 with a `reason` if state is missing, has an invalid signature, or is
+ *   expired/not found in KV; 500 if the stored state can't be read
  */
 export async function validateOAuthState(
   request: Request,
@@ -123,26 +100,26 @@ export async function validateOAuthState(
   const stateFromQuery = url.searchParams.get("state");
 
   if (!stateFromQuery) {
-    throw new OAuthError("invalid_request", "Missing state parameter", 400);
+    throw stateRefused("state_missing");
   }
 
   // Verify HMAC signature before touching KV — rejects forged/injected state values immediately
   const dotIndex = stateFromQuery.lastIndexOf(".");
   if (dotIndex === -1) {
-    throw new OAuthError("invalid_request", "Invalid state format", 400);
+    throw stateRefused("state_malformed");
   }
   const uuid = stateFromQuery.substring(0, dotIndex);
   const hmac = stateFromQuery.substring(dotIndex + 1);
 
   const isValid = await verifySignature(hmac, uuid, secret);
   if (!isValid) {
-    throw new OAuthError("invalid_request", "Invalid state signature", 400);
+    throw stateRefused("state_forged");
   }
 
   // Look up by UUID only after signature is verified
   const storedDataJson = await kv.get(`oauth:state:${uuid}`);
   if (!storedDataJson) {
-    throw new OAuthError("invalid_request", "Invalid or expired state", 400);
+    throw stateRefused("state_expired");
   }
 
   let stored: { oauthReqInfo: AuthRequest; codeVerifier: string };
@@ -151,8 +128,11 @@ export async function validateOAuthState(
       oauthReqInfo: AuthRequest;
       codeVerifier: string;
     };
-  } catch (_e) {
-    throw new OAuthError("server_error", "Invalid state data", 500);
+  } catch (error) {
+    // Only this server writes it, so unreadable state is a bug of ours: withOAuthFailures logs it.
+    throw new HttpError(500, "Something went wrong on our side. Start connecting to Productive again from Claude.", {
+      cause: error,
+    });
   }
 
   // Delete state from KV (one-time use)
@@ -265,6 +245,15 @@ export function getUpstreamAuthorizeUrl(params: {
   return url.toString();
 }
 
+/** Why the code exchange with Cloudflare Access gave no tokens. */
+export type AccessTokenFailure =
+  /** No answer: unreachable, or nothing within ACCESS_TIMEOUT_MS. */
+  | { kind: "unreachable"; timedOut: boolean; error: unknown }
+  /** Access refused, with its status and OAuth error code (never its description or body). */
+  | { kind: "refused"; accessStatus: number; accessError?: string }
+  /** A 2xx without the tokens, or not JSON. */
+  | { kind: "bad_answer"; detail: string };
+
 /**
  * Exchanges an authorization code for an access token from the upstream provider.
  * Sends the PKCE code_verifier to bind the exchange to the original authorization request.
@@ -273,17 +262,13 @@ export async function fetchUpstreamAuthToken(params: {
   upstream_url: string;
   client_id: string;
   client_secret: string;
-  code?: string;
+  code: string;
   redirect_uri: string;
   code_verifier: string;
 }): Promise<
-  | { accessToken: string; idToken: string; refreshToken?: string; error?: undefined }
-  | { error: Response }
+  | { ok: true; accessToken: string; idToken: string; refreshToken?: string }
+  | { ok: false; failure: AccessTokenFailure }
 > {
-  if (!params.code) {
-    return { error: new Response("Missing authorization code", { status: 400 }) };
-  }
-
   const data = new URLSearchParams({
     client_id: params.client_id,
     client_secret: params.client_secret,
@@ -293,36 +278,33 @@ export async function fetchUpstreamAuthToken(params: {
     code_verifier: params.code_verifier,
   });
 
-  const response = await fetch(params.upstream_url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    },
-    body: data.toString(),
-  });
+  let response: Response;
+  try {
+    response = await fetch(params.upstream_url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: data.toString(),
+      signal: AbortSignal.timeout(ACCESS_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "TimeoutError";
+    return { ok: false, failure: { kind: "unreachable", timedOut, error } };
+  }
 
+  const body = (await response.json().catch(() => undefined)) as
+    | { access_token?: string; id_token?: string; refresh_token?: string; error?: unknown }
+    | undefined;
   if (!response.ok) {
-    const errorText = await response.text();
-    return {
-      error: new Response(`Failed to exchange code for token: ${errorText}`, {
-        status: response.status,
-      }),
-    };
+    const accessError = typeof body?.error === "string" ? body.error.slice(0, 100) : undefined;
+    return { ok: false, failure: { kind: "refused", accessStatus: response.status, ...(accessError && { accessError }) } };
   }
-
-  const body = (await response.json()) as {
-    access_token?: string;
-    id_token?: string;
-    refresh_token?: string;
-  };
-  if (!body.access_token) {
-    return { error: new Response("Missing access token", { status: 400 }) };
-  }
-  if (!body.id_token) {
-    return { error: new Response("Missing ID token", { status: 400 }) };
-  }
-  return { accessToken: body.access_token, idToken: body.id_token, refreshToken: body.refresh_token };
+  if (!body) return { ok: false, failure: { kind: "bad_answer", detail: "not JSON" } };
+  if (!body.access_token) return { ok: false, failure: { kind: "bad_answer", detail: "no access_token" } };
+  if (!body.id_token) return { ok: false, failure: { kind: "bad_answer", detail: "no id_token" } };
+  return { ok: true, accessToken: body.access_token, idToken: body.id_token, refreshToken: body.refresh_token };
 }
 
 /**

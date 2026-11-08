@@ -2,5 +2,5 @@
 	"printWidth": 100,
 	"tabWidth": 4,
 	"useTabs": true,
-	"ignorePatterns": ["src/lib/log.ts"]
+	"ignorePatterns": ["src/lib/log.ts", "src/lib/http-error.ts", "src/lib/oauth-failures.ts"]
 }

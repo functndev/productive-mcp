@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { productiveFetch } from '../api/fetch.js';
+import { productiveFailure, productiveFetch } from '../api/fetch.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveTaskUpdate, ProductiveIncludedResource } from '../api/types.js';
 import type { Config } from '../config/index.js';
@@ -31,9 +31,7 @@ async function resolveWorkflowStatuses(
     `${cfg.PRODUCTIVE_API_BASE_URL}tasks/${taskId}?include=project`,
     { headers }
   );
-  if (!taskRes.ok) {
-    throw new Error(`Failed to fetch task ${taskId}: ${taskRes.status}`);
-  }
+  if (!taskRes.ok) throw await productiveFailure(taskRes);
   const taskData = (await taskRes.json()) as { data?: { relationships?: { project?: { data?: { id?: string } } } } };
   const projectId = taskData.data?.relationships?.project?.data?.id;
   if (!projectId) {
@@ -45,9 +43,7 @@ async function resolveWorkflowStatuses(
     `${cfg.PRODUCTIVE_API_BASE_URL}projects/${projectId}?include=workflow`,
     { headers }
   );
-  if (!projRes.ok) {
-    throw new Error(`Failed to fetch project ${projectId}: ${projRes.status}`);
-  }
+  if (!projRes.ok) throw await productiveFailure(projRes);
   const projData = (await projRes.json()) as { data?: { relationships?: { workflow?: { data?: { id?: string } } } } };
   const workflowId = projData.data?.relationships?.workflow?.data?.id;
   if (!workflowId) {
@@ -59,9 +55,7 @@ async function resolveWorkflowStatuses(
     `${cfg.PRODUCTIVE_API_BASE_URL}workflow_statuses?filter[workflow_id]=${workflowId}&page[size]=200`,
     { headers }
   );
-  if (!statusRes.ok) {
-    throw new Error(`Failed to fetch workflow statuses: ${statusRes.status}`);
-  }
+  if (!statusRes.ok) throw await productiveFailure(statusRes);
   const statusData = (await statusRes.json()) as { data: ProductiveIncludedResource[] };
 
   const statuses = statusData.data.map((s: ProductiveIncludedResource) => ({

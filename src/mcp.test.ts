@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import type { Config } from './config/index.js';
+import { checkLine } from './lib/log.js';
 import { createMcpServer } from './mcp.js';
 
 const config: Config = {
@@ -322,7 +323,14 @@ describe('logging', () => {
   beforeEach(() => {
     spies = (['info', 'warn', 'error'] as const).map((level) => spyOn(console, level).mockImplementation(() => {}));
   });
-  afterEach(() => spies.forEach((spy) => spy.mockRestore()));
+  afterEach(() => {
+    // Every line any test here wrote follows the logging convention.
+    const problems = spies.flatMap((spy, i) =>
+      spy.mock.calls.flatMap((call: unknown[]) => checkLine(String(call[0]), (['info', 'warn', 'error'] as const)[i]))
+    );
+    spies.forEach((spy) => spy.mockRestore());
+    expect(problems).toEqual([]);
+  });
   /** Every line written so far, in order, with the console method as `level`. */
   const lines = (): Line[] =>
     spies
@@ -387,11 +395,11 @@ describe('logging', () => {
     expect(JSON.stringify(lines())).not.toContain('secret-looking value');
   });
 
-  test('a setup someone at functn must fix is not_configured', async () => {
+  test('a setup someone at functn must fix is not_configured, and fails at error (D6)', async () => {
     mockProductive({});
     await callTool('list_users', {});
     expect(lines()).toEqual([
-      expect.objectContaining({ level: 'info', event: 'mcp.tool', toolError: 'not_configured', result: 'ok' }),
+      expect.objectContaining({ level: 'error', event: 'mcp.tool', toolError: 'not_configured', result: 'failed' }),
     ]);
   });
 
@@ -400,7 +408,7 @@ describe('logging', () => {
     const result = await callTool('get_task', { task_id: '9' });
     expect(result.isError).toBe(true);
     expect(lines()).toEqual([
-      expect.objectContaining({ level: 'warn', event: 'productive.request_failed', httpMethod: 'GET', path: 'tasks/9', status: 404 }),
+      expect.objectContaining({ level: 'warn', event: 'productive.request_failed', httpMethod: 'GET', path: 'tasks/9', productiveStatus: 404 }),
       expect.objectContaining({
         level: 'info',
         event: 'mcp.tool',
@@ -415,7 +423,6 @@ describe('logging', () => {
 
   test.each([
     [400, 'invalid_input'],
-    [401, 'not_configured'],
     [403, 'forbidden'],
     [409, 'conflict'],
     [410, 'not_found'],
@@ -426,12 +433,13 @@ describe('logging', () => {
     expect(lines().slice(-1)[0]).toMatchObject({ level: 'info', event: 'mcp.tool', toolError: kind, toolMessage: 'Nope', result: 'ok' });
   });
 
-  test('a Productive 429 is rate_limited, and the call fails at error', async () => {
+  test('a Productive 429 is rate_limited, says when to retry, and the call fails at error', async () => {
     mockProductive({ 'GET tasks': () => new Response('busy', { status: 429, headers: { 'retry-after': '10' } }) });
     const result = await callTool('list_tasks', {});
     expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Try again in 10 seconds');
     expect(lines()).toEqual([
-      expect.objectContaining({ level: 'warn', event: 'productive.rate_limited', status: 429, retryAfter: '10' }),
+      expect.objectContaining({ level: 'warn', event: 'productive.rate_limited', productiveStatus: 429, retryAfter: '10' }),
       expect.objectContaining({
         level: 'error',
         event: 'mcp.tool',
@@ -440,19 +448,75 @@ describe('logging', () => {
         productiveStatus: 429,
         productiveFailed: 1,
         result: 'failed',
-        error: expect.objectContaining({ message: 'API request failed with status 429' }),
       }),
     ]);
   });
 
-  test('a Productive 5xx or a status no kind fits fails the call at error', async () => {
-    for (const status of [502, 405]) {
-      mockProductive({ 'GET tasks': () => new Response('down', { status }) });
-      await callTool('list_tasks', {});
-      const line = lines().slice(-1)[0]!;
-      expect(line).toMatchObject({ level: 'error', event: 'mcp.tool', productiveStatus: status, result: 'failed' });
-      expect(line).not.toHaveProperty('toolError');
-    }
+  test('a Productive 401 is a revoked token of ours: not_configured, failed at error (D6)', async () => {
+    mockProductive({ 'GET tasks': () => Response.json({ errors: [{ detail: 'Unauthorized' }] }, { status: 401 }) });
+    const result = await callTool('list_tasks', {});
+    expect(textOf(result)).toContain('Someone at functn has to replace it');
+    expect(lines().slice(-1)[0]).toMatchObject({
+      level: 'error',
+      event: 'mcp.tool',
+      toolError: 'not_configured',
+      productiveStatus: 401,
+      result: 'failed',
+    });
+  });
+
+  test("Productive's own trouble fails the call at error and tells the model it is upstream (D13)", async () => {
+    mockProductive({ 'GET tasks': () => new Response('down', { status: 502 }) });
+    const result = await callTool('list_tasks', {});
+    expect(textOf(result)).toContain('Productive is having trouble (status 502)');
+    expect(lines().slice(-1)[0]).toMatchObject({
+      level: 'error',
+      event: 'mcp.tool',
+      toolError: 'upstream',
+      productiveStatus: 502,
+      result: 'failed',
+    });
+  });
+
+  test('a status no kind fits fails the call at error without a kind', async () => {
+    mockProductive({ 'GET tasks': () => new Response('nope', { status: 405 }) });
+    await callTool('list_tasks', {});
+    const line = lines().slice(-1)[0]!;
+    expect(line).toMatchObject({ level: 'error', event: 'mcp.tool', productiveStatus: 405, result: 'failed' });
+    expect(line).not.toHaveProperty('toolError');
+  });
+
+  test('a Productive call that times out is upstream and says so', async () => {
+    globalThis.fetch = (async () => {
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    }) as unknown as typeof fetch;
+    const result = await callTool('list_tasks', {});
+    expect(textOf(result)).toContain('did not answer within 15 seconds');
+    expect(lines()).toEqual([
+      expect.objectContaining({ level: 'warn', event: 'productive.request_failed', timedOut: true }),
+      expect.objectContaining({ level: 'error', event: 'mcp.tool', toolError: 'upstream', productiveStatus: 0, result: 'failed' }),
+    ]);
+  });
+
+  test("the file host's login page is a forbidden tool error, not a failure", async () => {
+    mockProductive({
+      'GET attachments/5': () => ({
+        data: { id: '5', type: 'attachments', attributes: { name: 'a.pdf', content_type: 'application/pdf', size: 10, url: 'https://files.productive.io/a.pdf' } },
+      }),
+      'GET /a.pdf': () => new Response('<html>login</html>', { headers: { 'content-type': 'text/html' } }),
+    });
+    await callTool('get_attachment', { attachment_id: '5', raw: true });
+    expect(lines().slice(-1)[0]).toMatchObject({ level: 'info', event: 'mcp.tool', toolError: 'forbidden', result: 'ok' });
+  });
+
+  test('every Productive call carries a timeout signal', async () => {
+    let signal: AbortSignal | null | undefined;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      signal = init?.signal;
+      return Response.json({ data: [] });
+    }) as typeof fetch;
+    await callTool('list_tasks', {});
+    expect(signal).toBeInstanceOf(AbortSignal);
   });
 
   test('a failed merged update logs the cause, not the saved changes its message lists', async () => {

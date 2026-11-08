@@ -6,6 +6,7 @@ import type { AttachmentLinkSigner } from './attachment-links.js';
 import { productiveNotes } from './api/fetch.js';
 import { McpError, noteOfRefusal, type ToolErrorKind } from './errors.js';
 import { log, unit } from './lib/log.js';
+import { actorOf } from './answers.js';
 import type { RegisterTools, ToolContext } from './tools/context.js';
 import { registerWhoamiTools } from './tools/whoami.js';
 import { registerUserTools } from './tools/users.js';
@@ -92,7 +93,7 @@ export function createMcpServer(config: Config, attachmentLinks?: AttachmentLink
 
 /**
  * The kind a Productive status means for the model (logging convention, "MCP tool calls"), or
- * undefined when none fits: 5xx, no answer (0) and anything else fail the call.
+ * undefined when none fits (a 405, say): then the call fails without a kind.
  */
 function kindOfStatus(status: number): ToolErrorKind | undefined {
   if (status === 400 || status === 422) return 'invalid_input';
@@ -102,12 +103,23 @@ function kindOfStatus(status: number): ToolErrorKind | undefined {
   if (status === 404 || status === 410) return 'not_found';
   if (status === 409) return 'conflict';
   if (status === 429) return 'rate_limited';
+  // Productive's own trouble, or no answer (0: unreachable or timed out).
+  if (status === 0 || status >= 500) return 'upstream';
   return undefined;
 }
 
 /**
- * Why a thrown tool call is a tool error, or undefined when it is a failure. A failed Productive
- * call decides it (with Productive's message as `toolMessage`); otherwise an McpError the tool
+ * Kinds that leave the person with nothing because of something on our side or Productive's, not
+ * the model's: the call is a failure at `error` that still tells the model its kind
+ * (functn-it errors/README.md). `not_configured` is D6: a credential of ours that is missing or
+ * stopped working (a revoked Productive token in USER_MAPPING) needs someone at functn, so it must
+ * reach someone; `upstream` and `rate_limited` are D13: one `error` per request Productive failed.
+ */
+const FAILING_KINDS: ReadonlySet<ToolErrorKind> = new Set(['not_configured', 'upstream', 'rate_limited']);
+
+/**
+ * Why a thrown tool call is a tool error, or undefined when it is a failure no kind fits. A failed
+ * Productive call decides it (with its message as `toolMessage`); otherwise an McpError the tool
  * created for bad input or a refused request.
  */
 function toolErrorOf(): { toolError: ToolErrorKind; toolMessage?: string } | undefined {
@@ -171,10 +183,11 @@ function idFields(args: unknown): Record<string, unknown> {
  * Wraps registerTool so every call is one mcp.tool unit (logging convention, lib/log.ts): the
  * tool, the actor, the ids it was called with, its Productive calls (productiveCalls, -Ms,
  * -Failed, the last failed productiveStatus) and what it changed (`writes`). A call the model can
- * act on (bad input, a Productive 4xx) is `toolError` with a kind on an `ok` line; a Productive 429
- * is `rate_limited` too, but the person got nothing, so the unit fails. Anything no kind fits is a
- * failed unit at error. Arguments the input schema rejects never reach the tool: withoutSchemaUri's
- * validate writes their mcp.tool line. Tool schemas go out without "$schema".
+ * act on (bad input, a Productive 4xx) is `toolError` with a kind on an `ok` line; a kind that
+ * leaves the person with nothing because of us or Productive (FAILING_KINDS) fails the unit at
+ * error and keeps the kind. Anything no kind fits is a failed unit at error. Arguments the input
+ * schema rejects never reach the tool: withoutSchemaUri's validate writes their mcp.tool line.
+ * Tool schemas go out without "$schema".
  */
 function logToolCalls(server: McpServer, config: Config): void {
   const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
@@ -183,7 +196,7 @@ function logToolCalls(server: McpServer, config: Config): void {
     toolConfig: { inputSchema?: StandardSchemaWithJSON },
     callback: (...args: unknown[]) => Promise<ToolResult>
   ) => {
-    const context = { tool: name, actor: config.PRODUCTIVE_USER_EMAIL, actorPersonId: config.PRODUCTIVE_USER_ID };
+    const context = { tool: name, actor: actorOf(config.PRODUCTIVE_USER_EMAIL), actorPersonId: config.PRODUCTIVE_USER_ID };
     const inputSchema =
       toolConfig.inputSchema &&
       withoutSchemaUri(toolConfig.inputSchema, (issues, durationMs) =>
@@ -215,8 +228,7 @@ function logToolCalls(server: McpServer, config: Config): void {
           }
           // Changes saved before the call failed (a merged update tool) are in `writes`.
           u.set(toolError);
-          // A rate limit the call didn't ride out leaves the person with nothing.
-          if (toolError.toolError === 'rate_limited') u.fail(loggable(error));
+          if (FAILING_KINDS.has(toolError.toolError)) u.fail(loggable(error));
           return undefined;
         }
       });

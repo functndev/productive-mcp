@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { productiveFetch } from '../api/fetch.js';
+import { productiveFailure, productiveFetch } from '../api/fetch.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveIncludedResource } from '../api/types.js';
 import { READ, WRITE, result, resolveMe, type RegisterTools } from './context.js';
@@ -48,9 +48,7 @@ export async function listSubtasksTool(
       },
     });
 
-    if (!response.ok) {
-      throw new Error(`Failed to list subtasks: ${response.statusText}`);
-    }
+    if (!response.ok) throw await productiveFailure(response);
 
     const data = (await response.json()) as {
       data?: Array<{ id: string; attributes: any; relationships?: Record<string, any> }>;
