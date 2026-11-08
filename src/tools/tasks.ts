@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
-import { productiveFetch } from '../api/fetch.js';
+import { productiveFailure, productiveFetch } from '../api/fetch.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveTaskUpdate, ProductiveIncludedResource, ProductiveAttachment } from '../api/types.js';
 import { formatAttachmentList } from './attachments.js';
@@ -126,9 +126,7 @@ export async function getTaskTool(
       }
     });
     
-    if (!response.ok) {
-      throw new Error(`Failed to get task: ${response.statusText}`);
-    }
+    if (!response.ok) throw await productiveFailure(response);
     
     const data = (await response.json()) as {
       data: { id: string; attributes: any; relationships?: Record<string, any> };

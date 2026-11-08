@@ -1,7 +1,8 @@
 import { ProductiveAPIClient } from "./api/client.js";
 import { ProductiveApiError } from "./api/fetch.js";
-import { log } from "./lib/log.js";
-import { parseConfig } from "./config/index.js";
+import { errorResponse, HttpError, requestIdOf } from "./lib/http-error.js";
+import { unit } from "./lib/log.js";
+import { type Config, parseConfig } from "./config/index.js";
 import { parseUserMapping } from "./access-handler.js";
 
 /**
@@ -105,22 +106,65 @@ export function createAttachmentLinkSigner(
   };
 }
 
-function textResponse(status: number, message: string): Response {
-  return new Response(message, {
-    status,
-    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
-  });
-}
-
 /** `filename*` carries the real name; `filename` is an ASCII fallback. */
 function contentDisposition(filename: string): string {
   const ascii = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
-/** Serves `GET /attachments/<id>/<filename>?u=&exp=&sig=`. */
+/**
+ * The answer for a failed Productive call during a download (the caller is curl run by Claude,
+ * which only sees the status): the status Productive's means for this link, and whether it is a
+ * refusal or a failure of ours or Productive's (functn-it errors/README.md, D6 and D13).
+ */
+function answerOfProductive(error: ProductiveApiError): { answer: HttpError; refusal: boolean } {
+  const { status } = error;
+  if (status === 404 || status === 410) {
+    return { answer: new HttpError(404, "The attachment no longer exists in Productive."), refusal: true };
+  }
+  if (status === 403) {
+    return { answer: new HttpError(403, "Your Productive account may not open this attachment."), refusal: true };
+  }
+  if (status === 401) {
+    // The user's Productive token in USER_MAPPING was rejected: someone at functn has to replace it.
+    return { answer: new HttpError(503, error.message, { code: "not_configured" }), refusal: false };
+  }
+  if (status === 429) {
+    const retryAfter = error.options.retryAfterS === undefined ? {} : { retryAfterS: error.options.retryAfterS };
+    return {
+      answer: new HttpError(429, error.message, { code: "rate_limited", details: retryAfter }),
+      refusal: false,
+    };
+  }
+  if (status === 0 && error.options.timedOut) {
+    return { answer: new HttpError(504, error.message, { code: "upstream_timeout" }), refusal: false };
+  }
+  // Productive's own trouble (5xx), no answer, or a status nothing here expects.
+  return {
+    answer: new HttpError(502, "Could not fetch the attachment from Productive. Try again shortly.", {
+      code: "upstream_unavailable",
+    }),
+    refusal: false,
+  };
+}
+
+/** The JSON envelope for curl; a 429 also carries Retry-After. */
+function answer(error: HttpError, requestId: string | undefined): Response {
+  if (error.requestId === undefined && requestId) error.requestId = requestId;
+  const retryAfterS = error.details?.retryAfterS;
+  return errorResponse(error, typeof retryAfterS === "number" ? { headers: { "Retry-After": String(retryAfterS) } } : undefined);
+}
+
+/**
+ * Serves `GET /attachments/<id>/<filename>?u=&exp=&sig=` as one attachment.download unit: a link
+ * that is wrong, expired or no longer allowed is `skipped` with its status at info; a failure of
+ * ours or Productive's fails the unit at error.
+ */
 export async function handleAttachmentDownload(request: Request, env: Env): Promise<Response> {
-  if (request.method !== "GET") return textResponse(405, "Method not allowed");
+  const requestId = requestIdOf(request);
+  if (request.method !== "GET") {
+    return answer(new HttpError(405, "Method not allowed", { code: "method_not_allowed" }), requestId);
+  }
 
   const url = new URL(request.url);
   const attachmentId = decodeURIComponent(
@@ -130,55 +174,90 @@ export async function handleAttachmentDownload(request: Request, env: Env): Prom
   const expires = Number(url.searchParams.get("exp"));
   const signature = fromBase64Url(url.searchParams.get("sig") ?? "");
 
-  if (!/^\d+$/.test(attachmentId) || !userId || !Number.isInteger(expires) || !signature) {
-    return textResponse(400, "Invalid download link");
-  }
+  const context = { attachmentId, ...(userId && /^\d+$/.test(userId) && { actor: `productive:${userId}` as const }) };
+  return unit("attachment.download", context, async (u) => {
+    const refuse = (error: HttpError) => {
+      u.result("skipped");
+      u.set({ statusCode: error.status, reason: error.reason ?? error.code });
+      return answer(error, requestId);
+    };
+    const fail = (error: HttpError, cause: unknown) => {
+      u.fail(cause);
+      return answer(error, requestId);
+    };
+    const invalid = (reason: string) =>
+      new HttpError(reason === "bad_signature" || reason === "unknown_user" ? 403 : 400, "Invalid download link", {
+        code: reason === "bad_signature" || reason === "unknown_user" ? "forbidden" : "invalid_input",
+        reason,
+      });
 
-  const valid = await crypto.subtle.verify(
-    "HMAC",
-    await signingKey(env.COOKIE_ENCRYPTION_KEY),
-    signature,
-    signedPayload(attachmentId, userId, expires),
-  );
-  if (!valid) return textResponse(403, "Invalid download link");
-  if (expires < Date.now() / 1000) {
-    return textResponse(410, "Download link expired. Call get_attachment again for a new one.");
-  }
+    if (!/^\d+$/.test(attachmentId) || !userId || !Number.isInteger(expires) || !signature) {
+      return refuse(invalid("malformed_link"));
+    }
 
-  const entry = Object.values(parseUserMapping(env.USER_MAPPING)).find(
-    e => String(e?.userId) === userId,
-  );
-  if (!entry?.apiToken) return textResponse(403, "Invalid download link");
+    const valid = await crypto.subtle.verify(
+      "HMAC",
+      await signingKey(env.COOKIE_ENCRYPTION_KEY),
+      signature,
+      signedPayload(attachmentId, userId, expires),
+    );
+    if (!valid) return refuse(invalid("bad_signature"));
+    if (expires < Date.now() / 1000) {
+      return refuse(
+        new HttpError(410, "Download link expired. Call get_attachment again for a new one.", { code: "link_expired" }),
+      );
+    }
 
-  const client = new ProductiveAPIClient(
-    parseConfig({
-      PRODUCTIVE_API_TOKEN: entry.apiToken,
-      PRODUCTIVE_USER_ID: userId,
-      PRODUCTIVE_ORG_ID: env.PRODUCTIVE_ORG_ID,
-      PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
-    }),
-  );
+    let mapping: ReturnType<typeof parseUserMapping>;
+    try {
+      mapping = parseUserMapping(env.USER_MAPPING);
+    } catch (error) {
+      return fail(new HttpError(503, "The Productive MCP is misconfigured on our side. Tell functn IT.", { code: "not_configured" }), error);
+    }
+    const entry = Object.values(mapping).find((e) => String(e?.userId) === userId);
+    // Signed for someone who has since been removed from USER_MAPPING.
+    if (!entry?.apiToken) return refuse(invalid("unknown_user"));
 
-  try {
-    const { data: attachment } = await client.getAttachment(attachmentId);
-    const a = attachment.attributes;
-    if (a.deleted_at) return textResponse(404, "Attachment has been deleted");
+    let config: Config;
+    try {
+      config = parseConfig({
+        PRODUCTIVE_API_TOKEN: entry.apiToken,
+        PRODUCTIVE_USER_ID: userId,
+        PRODUCTIVE_ORG_ID: env.PRODUCTIVE_ORG_ID,
+        PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
+      });
+    } catch (error) {
+      return fail(new HttpError(503, "The Productive MCP is misconfigured on our side. Tell functn IT.", { code: "not_configured" }), error);
+    }
+    const client = new ProductiveAPIClient(config);
 
-    const file = await client.fetchAttachmentFile(a.url);
-    const headers = new Headers({
-      "Content-Type":
-        a.content_type || file.headers.get("content-type") || "application/octet-stream",
-      "Content-Disposition": contentDisposition(a.name),
-      "Cache-Control": "private, no-store",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer",
-    });
-    const length = file.headers.get("content-length");
-    if (length) headers.set("Content-Length", length);
-    return new Response(file.body, { status: 200, headers });
-  } catch (error) {
-    // A failed Productive answer already has its warn line (api/fetch.ts); anything else is a bug.
-    if (!(error instanceof ProductiveApiError)) log.error("attachment.download_failed", { attachmentId, error });
-    return textResponse(502, "Could not fetch the attachment from Productive");
-  }
+    try {
+      const { data: attachment } = await client.getAttachment(attachmentId);
+      const a = attachment.attributes;
+      if (a.deleted_at) {
+        return refuse(new HttpError(404, "The attachment has been deleted in Productive.", { reason: "deleted" }));
+      }
+
+      const file = await client.fetchAttachmentFile(a.url);
+      const headers = new Headers({
+        "Content-Type":
+          a.content_type || file.headers.get("content-type") || "application/octet-stream",
+        "Content-Disposition": contentDisposition(a.name),
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+      });
+      const length = file.headers.get("content-length");
+      if (length) headers.set("Content-Length", length);
+      u.set({ sizeBytes: length ? Number(length) : undefined });
+      return new Response(file.body, { status: 200, headers });
+    } catch (error) {
+      if (!(error instanceof ProductiveApiError)) {
+        return fail(new HttpError(500, "Something went wrong on our side. Try again.", { code: "internal_error" }), error);
+      }
+      const { answer: productiveAnswer, refusal } = answerOfProductive(error);
+      if (refusal) return refuse(productiveAnswer);
+      return fail(productiveAnswer, error);
+    }
+  });
 }

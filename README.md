@@ -18,7 +18,7 @@ Flow:
 
 | Path                                 | Purpose                                       |
 | ------------------------------------ | --------------------------------------------- |
-| `GET /authorize` / `POST /authorize` | OAuth authorization endpoint                  |
+| `GET /authorize`                     | OAuth authorization endpoint                  |
 | `POST /token`                        | OAuth token endpoint                          |
 | `POST /register`                     | OAuth dynamic client registration             |
 | `GET /callback`                      | Upstream Access redirect target               |

@@ -33,10 +33,9 @@ import {
   ProductiveTaskDependency,
   ProductiveTaskDependencyCreate,
   ProductiveAttachment,
-  ProductiveError,
 } from "./types.js";
 import { log } from "../lib/log.js";
-import { productiveFetch, ProductiveApiError, recordWrite } from "./fetch.js";
+import { productiveFailure, productiveFetch, ProductiveApiError, recordWrite } from "./fetch.js";
 
 export class ProductiveAPIClient {
   private config: Config;
@@ -72,25 +71,7 @@ export class ProductiveAPIClient {
       },
     });
 
-    if (!response.ok) {
-      let errorData: ProductiveError = {} as ProductiveError;
-      try {
-        errorData = (await response.json()) as ProductiveError;
-      } catch {
-        /* no JSON body */
-      }
-      const errorMessage = errorData.errors?.length
-        ? errorData.errors.map(e => {
-            const field = e.source?.pointer
-              ? ` [field: ${e.source.pointer}]`
-              : e.source?.parameter
-                ? ` [param: ${e.source.parameter}]`
-                : '';
-            return `${e.detail || e.title || 'Unknown error'}${field}`;
-          }).join('; ')
-        : `API request failed with status ${response.status}`;
-      throw new ProductiveApiError(errorMessage, response.status);
-    }
+    if (!response.ok) throw await productiveFailure(response);
 
     const body = (await response.json()) as T;
     if (method !== "GET") {
@@ -113,16 +94,7 @@ export class ProductiveAPIClient {
       },
     });
 
-    if (!response.ok) {
-      let errorMessage = `API request failed with status ${response.status}`;
-      try {
-        const errorData = (await response.json()) as ProductiveError;
-        errorMessage = errorData.errors?.[0]?.detail || errorMessage;
-      } catch {
-        /* no JSON body */
-      }
-      throw new ProductiveApiError(errorMessage, response.status);
-    }
+    if (!response.ok) throw await productiveFailure(response, { firstDetailOnly: true });
     recordWrite(options?.method ?? "GET", url);
   }
 
@@ -856,10 +828,7 @@ export class ProductiveAPIClient {
           404,
         );
       }
-      throw new ProductiveApiError(
-        `Reposition failed with status ${response.status}: ${response.statusText}`,
-        response.status,
-      );
+      throw await productiveFailure(response);
     }
     recordWrite("PATCH", url);
 
@@ -1429,14 +1398,10 @@ export class ProductiveAPIClient {
     const separator = fileUrl.includes("?") ? "&" : "?";
     const authedUrl = `${fileUrl}${separator}token=${encodeURIComponent(this.config.PRODUCTIVE_API_TOKEN)}`;
 
-    const response = await productiveFetch(authedUrl);
+    // Only the wait for the headers is bounded: the body is streamed on and may be large.
+    const response = await productiveFetch(authedUrl, undefined, { timeout: "headers" });
 
-    if (!response.ok) {
-      throw new ProductiveApiError(
-        `Failed to download attachment file (status ${response.status})`,
-        response.status,
-      );
-    }
+    if (!response.ok) throw await productiveFailure(response);
 
     // A rejected token is answered with a 302 to the HTML login page rather
     // than a 4xx, so detect that explicitly instead of returning a page of
