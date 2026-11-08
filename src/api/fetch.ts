@@ -1,6 +1,7 @@
 // Every request to Productive goes through productiveFetch, so the unit it runs in (an mcp.tool
 // call, an attachment download) can say on its summary line how many calls it made, how long they
-// took and what it changed. A failed answer is one warn line; a call is never a line of its own.
+// took (`u.count`: productiveCalls, productiveMs, productiveFailed) and what it changed. A failed
+// answer is one warn line; a call is never a line of its own.
 
 import { getUnit, log, type Unit } from '../lib/log.js';
 
@@ -16,13 +17,13 @@ export class ProductiveApiError extends Error {
     // Kept for the unit's toolMessage: tools wrap this message in their own text, which can quote
     // what was written.
     const unit = getUnit();
-    if (unit) statsOf(unit).lastFailedMessage = message;
+    if (unit) notesOf(unit).lastFailedMessage = message;
   }
 }
 
-type Stats = {
-  calls: number;
-  ms: number;
+/** What a unit's Productive calls left besides their counts, which `u.count` keeps. */
+type Notes = {
+  /** Failed calls so far, for the cap on warn lines. */
   failures: number;
   /** Status of the last failed call; 0 when the request itself failed (network). */
   lastFailedStatus?: number;
@@ -33,30 +34,31 @@ type Stats = {
 
 const MAX_WRITES_LISTED = 10;
 const MAX_FAILURES_LOGGED = 10;
-const stats = new WeakMap<Unit, Stats>();
+const notes = new WeakMap<Unit, Notes>();
 
-function statsOf(unit: Unit): Stats {
-  let found = stats.get(unit);
-  if (!found) {
-    found = { calls: 0, ms: 0, failures: 0, writes: [] };
-    stats.set(unit, found);
-  }
+function notesOf(unit: Unit): Notes {
+  let found = notes.get(unit);
+  if (!found) notes.set(unit, (found = { failures: 0, writes: [] }));
   return found;
 }
 
-/** What the current unit's Productive calls did so far, or undefined outside a unit. */
-export function productiveStats(): Readonly<Stats> | undefined {
+/** What the current unit's Productive calls left so far, or undefined outside a unit. */
+export function productiveNotes(): Readonly<Notes> | undefined {
   const unit = getUnit();
-  return unit && stats.get(unit);
+  return unit && notes.get(unit);
 }
 
-function publish(unit: Unit, s: Stats): void {
-  unit.set({
-    productiveCalls: s.calls,
-    productiveMs: s.ms,
-    ...(s.failures > 0 && { productiveFailures: s.failures, productiveStatus: s.lastFailedStatus }),
-    ...(s.writes.length > 0 && { writes: s.writes }),
-  });
+/** Counts one call on the unit; a failed one also sets `productiveStatus`, the last failed status. */
+function countCall(unit: Unit | undefined, started: number, failedStatus?: number): Notes | undefined {
+  if (!unit) return undefined;
+  const n = notesOf(unit);
+  unit.count('productive', { ms: Date.now() - started, failed: failedStatus !== undefined });
+  if (failedStatus !== undefined) {
+    n.failures += 1;
+    n.lastFailedStatus = failedStatus;
+    unit.set({ productiveStatus: failedStatus });
+  }
+  return n;
 }
 
 /** The API path without host and query, e.g. `tasks/123`, for log lines. */
@@ -75,36 +77,21 @@ function pathOf(url: string): string {
  */
 export async function productiveFetch(url: string, init?: RequestInit): Promise<Response> {
   const unit = getUnit();
-  const s = unit && statsOf(unit);
   const method = init?.method ?? 'GET';
   const started = Date.now();
   let response: Response;
   try {
     response = await fetch(url, init);
   } catch (error) {
-    if (s && unit) {
-      s.calls += 1;
-      s.ms += Date.now() - started;
-      s.failures += 1;
-      s.lastFailedStatus = 0;
-      publish(unit, s);
-    }
-    if (!s || s.failures <= MAX_FAILURES_LOGGED) {
+    const n = countCall(unit, started, 0);
+    if (!n || n.failures <= MAX_FAILURES_LOGGED) {
       log.warn('productive.request_failed', { httpMethod: method, path: pathOf(url), error });
     }
     // Same message as before, so the model sees no difference; status 0 marks "no answer".
     throw Object.assign(new ProductiveApiError(error instanceof Error ? error.message : String(error), 0), { cause: error });
   }
-  if (s && unit) {
-    s.calls += 1;
-    s.ms += Date.now() - started;
-    if (!response.ok) {
-      s.failures += 1;
-      s.lastFailedStatus = response.status;
-    }
-    publish(unit, s);
-  }
-  if (!response.ok && (!s || s.failures <= MAX_FAILURES_LOGGED)) {
+  const n = countCall(unit, started, response.ok ? undefined : response.status);
+  if (!response.ok && (!n || n.failures <= MAX_FAILURES_LOGGED)) {
     const fields = { httpMethod: method, path: pathOf(url), status: response.status };
     if (response.status === 429) {
       log.warn('productive.rate_limited', { ...fields, retryAfter: response.headers.get('retry-after') ?? undefined });
@@ -124,9 +111,9 @@ export function recordWrite(method: string, url: string, created?: { type?: stri
   const entry = method === 'POST' && created?.type && created.id ? `POST ${created.type}/${created.id}` : `${method} ${path}`;
   const unit = getUnit();
   if (unit) {
-    const s = statsOf(unit);
-    if (s.writes.length < MAX_WRITES_LISTED) s.writes.push(entry);
-    publish(unit, s);
+    const n = notesOf(unit);
+    if (n.writes.length < MAX_WRITES_LISTED) n.writes.push(entry);
+    unit.set({ writes: n.writes });
   }
   if (method === 'DELETE') {
     const [resource, resourceId] = path.split('/');

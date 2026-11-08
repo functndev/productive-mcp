@@ -102,7 +102,13 @@ export async function handleAccessRequest(
       codeVerifier = result.codeVerifier;
     } catch (error: any) {
       if (error instanceof OAuthError) {
-        log.warn("mcp.sign_in_refused", { reason: error.message });
+        // A refusal (missing or expired state) is `info`; state data this server can't read is its
+        // own trouble, so `warn`.
+        log[error.statusCode >= 500 ? "warn" : "info"]("mcp.sign_in_refused", {
+          statusCode: error.statusCode,
+          reason: error.code,
+          description: error.description,
+        });
         return error.toResponse();
       }
       throw error;
@@ -121,7 +127,12 @@ export async function handleAccessRequest(
       code_verifier: codeVerifier,
     });
     if (upstream.error) {
-      log.warn("mcp.sign_in_refused", { reason: "access_code_exchange_failed", status: upstream.error.status });
+      // Access answering 5xx is this server's trouble signing someone in, so `warn`; a 4xx (an
+      // expired or reused code) is a refusal.
+      log[upstream.error.status >= 500 ? "warn" : "info"]("mcp.sign_in_refused", {
+        statusCode: upstream.error.status,
+        reason: "access_code_exchange_failed",
+      });
       return upstream.error;
     }
     const { accessToken, idToken, refreshToken } = upstream;
@@ -132,7 +143,7 @@ export async function handleAccessRequest(
     const sub = String(idTokenClaims.sub ?? "");
 
     if (!email) {
-      log.warn("mcp.sign_in_refused", { reason: "no_email_claim" });
+      log.info("mcp.sign_in_refused", { statusCode: 403, reason: "no_email_claim" });
       return new Response("Forbidden: ID token has no email claim", {
         status: 403,
       });
@@ -149,7 +160,7 @@ export async function handleAccessRequest(
 
     const productive = lookupProductiveCredentials(email, mapping);
     if (!productive) {
-      log.warn("mcp.sign_in_refused", { actor: email, reason: "not_in_user_mapping" });
+      log.info("mcp.sign_in_refused", { actor: email, statusCode: 403, reason: "not_in_user_mapping" });
       return new Response(
         `Forbidden: ${email} is not authorized to use this MCP server`,
         { status: 403 },
@@ -279,11 +290,14 @@ export async function recheckOnRefresh({
 }): Promise<{ newProps: Props } | undefined> {
   if (grantType !== "refresh_token") return undefined;
   const current = props as Props;
-  // A refusal is the answer, not a failure: the unit logs it, and it is thrown to the library after.
+  // A refusal is the answer, not a failure: the unit logs it as `skipped` with the status the
+  // library answers and why, and it is thrown to the library after. Access being unreachable is a
+  // refusal too (503, the client retries); its own warn line says what went wrong.
   let refusal: ProviderOAuthError | undefined;
   const result = await unit("oauth.refresh", { actor: current.email }, async (u) => {
     const refuse = (reason: string, error: ProviderOAuthError) => {
-      u.set({ granted: false, reason });
+      u.result("skipped");
+      u.set({ statusCode: error.statusCode, reason });
       refusal = error;
       return undefined;
     };
@@ -315,7 +329,7 @@ export async function recheckOnRefresh({
       // sign-in returned no refresh token, so everyone signs in again at most once.
       const reauthBy = current.reauthBy ?? Date.now() + REAUTH_WITHOUT_REFRESH_MS;
       if (Date.now() >= reauthBy) return signInAgain("reauth_due", "Sign in through Cloudflare Access again");
-      u.set({ granted: true, accessChecked: false });
+      u.set({ accessChecked: false });
       return { newProps: { ...next, reauthBy } };
     }
 
@@ -345,7 +359,7 @@ export async function recheckOnRefresh({
       return unavailable();
     }
     const body = (await response.json()) as { refresh_token?: string };
-    u.set({ granted: true, accessChecked: true, accessRotated: Boolean(body.refresh_token) });
+    u.set({ accessChecked: true, accessRotated: Boolean(body.refresh_token) });
     return {
       newProps: { ...next, accessRefreshToken: body.refresh_token ?? current.accessRefreshToken },
     };

@@ -27,7 +27,7 @@ export const result = async (pending: Promise<unknown>): Promise<CallToolResult>
 /** Resolves "me" to the signed-in user's person ID; other values pass through. */
 export function resolveMe(id: string, config: Config): string {
   if (id !== 'me') return id;
-  if (!config.PRODUCTIVE_USER_ID) throw new McpError(ErrorCode.InvalidRequest, '"me" is not available: no Productive user is linked to this sign-in');
+  if (!config.PRODUCTIVE_USER_ID) throw new McpError(ErrorCode.InvalidRequest, '"me" is not available: no Productive user is linked to this sign-in', 'not_configured');
   return config.PRODUCTIVE_USER_ID;
 }
 
@@ -48,7 +48,11 @@ export async function runSteps(steps: Step[], nothingToDo: string): Promise<Text
       done.push(content.map((c) => c.text).join('\n'));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new McpError(ErrorCode.InternalError, done.length ? `${done.join('\n\n')}\n\nThen the ${label} change failed: ${message}` : message);
+      // The message quotes what was saved (titles, text), so the mcp.tool line logs the cause.
+      throw Object.assign(
+        new McpError(ErrorCode.InternalError, done.length ? `${done.join('\n\n')}\n\nThen the ${label} change failed: ${message}` : message),
+        { cause: error },
+      );
     }
   }
   return { content: [{ type: 'text', text: done.join('\n\n') }] };

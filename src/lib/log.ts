@@ -1,6 +1,7 @@
-// Copied from functndev/app-conventions v0.7.2 (94b6ce0): logging/log.ts. Do not edit here; change it there and copy it over.
-// The logging convention in code: functndev/app-conventions, logging/README.md.
-// Needs `nodejs_compat` (AsyncLocalStorage). No dependencies.
+// Copied from functndev/functn-it v0.9.1 (090b8b9): logging/log.ts. Do not edit here; change it there and copy it over.
+// The logging convention in code: functndev/functn-it, logging/README.md.
+// Needs `nodejs_compat`, or `nodejs_als` on an old compatibility date
+// (AsyncLocalStorage). No dependencies.
 
 import { AsyncLocalStorage } from 'node:async_hooks'
 
@@ -108,13 +109,37 @@ export type Unit = {
   set: (fields: LogFields) => void
   /** Marks the unit `skipped` or `partial`; a throw makes it `failed` (and is rethrown). */
   result: (result: Exclude<UnitResult, 'ok' | 'failed'>) => void
-  /** One `warn` per failed item, up to 10 per unit; the rest are counted. */
-  itemFailed: (event: string, fields?: LogFields) => void
+  /**
+   * One line per failed item, up to 10 per unit; the rest are counted. The
+   * unit becomes `partial`. The line is a `warn`, or an `error` with
+   * `{ dataLost: true }` when the lost item leaves data wrong.
+   */
+  itemFailed: (
+    event: string,
+    fields?: LogFields,
+    options?: { dataLost?: boolean },
+  ) => void
   /**
    * Marks the unit `failed` without throwing, e.g. a check that returned an
    * error. The summary goes out at `error` with `error` set.
    */
   fail: (error: unknown) => void
+  /**
+   * A failed attempt the queue will retry: throws `error` again, and the
+   * summary goes out `failed` at `warn` with `willRetry: true`, `attempt` and
+   * `maxAttempts`. On the last attempt (`attempt >= maxAttempts`, the one that
+   * goes to the dead-letter queue) it is a normal failure at `error`.
+   * `attempt` is 1-based, as `message.attempts`.
+   */
+  retry: (
+    error: unknown,
+    attempts: { attempt: number; maxAttempts: number },
+  ) => never
+  /**
+   * Counts one call to an upstream API on the summary line: `<api>Calls`,
+   * `<api>Ms` and `<api>Failed` (e.g. `productiveCalls`, `gaMs`).
+   */
+  count: (api: string, call: { ms: number; failed?: boolean }) => void
 }
 
 /**
@@ -134,7 +159,8 @@ export function getUnit(): Unit | undefined {
  *
  * A throw is logged as a `failed` summary at `error` and rethrown, so the
  * failure reaches the Worker's handler and Cloudflare records it. A failure
- * the app handles does not throw: `u.fail(error)`.
+ * the app handles does not throw: `u.fail(error)`. A queue attempt that will
+ * be retried: `u.retry(error, { attempt, maxAttempts })`.
  */
 export async function unit<T>(
   event: string,
@@ -146,29 +172,50 @@ export async function unit<T>(
   let result: UnitResult = 'ok'
   let failedItems = 0
   let failure: { error: unknown } | undefined
+  let retrying: { attempt: number; maxAttempts: number } | undefined
+  const calls: Record<string, number> = {}
 
   const handle: Unit = {
     set: (more) => Object.assign(summary, more),
     result: (marked) => {
       result = marked
     },
-    itemFailed: (itemEvent, itemFields) => {
+    itemFailed: (itemEvent, itemFields, options) => {
       failedItems += 1
-      if (failedItems <= MAX_FAILURES_LOGGED) log.warn(itemEvent, itemFields)
+      if (failedItems > MAX_FAILURES_LOGGED) return
+      if (options?.dataLost) log.error(itemEvent, itemFields)
+      else log.warn(itemEvent, itemFields)
     },
     fail: (error) => {
       failure = { error }
     },
+    retry: (error, { attempt, maxAttempts }) => {
+      retrying = { attempt, maxAttempts }
+      // Kept in case the code inside the unit catches the throw again.
+      failure = { error }
+      throw error
+    },
+    count: (api, { ms, failed }) => {
+      calls[`${api}Calls`] = (calls[`${api}Calls`] ?? 0) + 1
+      calls[`${api}Ms`] = (calls[`${api}Ms`] ?? 0) + ms
+      calls[`${api}Failed`] = (calls[`${api}Failed`] ?? 0) + (failed ? 1 : 0)
+    },
   }
 
-  const failed = (error: unknown) =>
-    write('error', event, {
+  const failed = (error: unknown) => {
+    const willRetry =
+      retrying !== undefined && retrying.attempt < retrying.maxAttempts
+    write(willRetry ? 'warn' : 'error', event, {
       ...summary,
+      ...calls,
       result: 'failed',
+      ...(willRetry ? { willRetry } : {}),
+      ...retrying,
       durationMs: Date.now() - started,
       ...counts(failedItems),
       error: serializeError(error),
     })
+  }
 
   return withLogContext(fields, () =>
     currentUnit.run(handle, async () => {
@@ -179,6 +226,7 @@ export async function unit<T>(
         failed(error)
         throw error
       }
+      // u.fail(), or a u.retry() whose throw was caught inside the unit
       if (failure) {
         failed(failure.error)
         return value
@@ -186,6 +234,7 @@ export async function unit<T>(
       if (failedItems > 0 && result === 'ok') result = 'partial'
       write(result === 'partial' ? 'warn' : 'info', event, {
         ...summary,
+        ...calls,
         result,
         durationMs: Date.now() - started,
         ...counts(failedItems),

@@ -364,11 +364,38 @@ describe('logging', () => {
     mockProductive({});
     await callTool('update_task', { task_id: '1' });
     expect(lines()).toEqual([
-      expect.objectContaining({ level: 'info', event: 'mcp.tool', toolError: 'invalid_params', result: 'ok' }),
+      expect.objectContaining({ level: 'info', event: 'mcp.tool', toolError: 'invalid_input', result: 'ok' }),
     ]);
   });
 
-  test('a Productive 4xx is a warn line and a tool error', async () => {
+  test('arguments the schema rejects: invalid_input with the issues, never the values', async () => {
+    const calls = mockProductive({});
+    const result = await callTool('list_tasks', { project_id: '7', limit: 'secret-looking value' });
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(lines()).toEqual([
+      expect.objectContaining({
+        level: 'info',
+        event: 'mcp.tool',
+        tool: 'list_tasks',
+        actor: 'me@functn.com',
+        result: 'ok',
+        toolError: 'invalid_input',
+        issues: [expect.objectContaining({ path: 'limit', code: 'invalid_type', expected: 'number' })],
+      }),
+    ]);
+    expect(JSON.stringify(lines())).not.toContain('secret-looking value');
+  });
+
+  test('a setup someone at functn must fix is not_configured', async () => {
+    mockProductive({});
+    await callTool('list_users', {});
+    expect(lines()).toEqual([
+      expect.objectContaining({ level: 'info', event: 'mcp.tool', toolError: 'not_configured', result: 'ok' }),
+    ]);
+  });
+
+  test('a Productive 4xx is a warn line and a tool error of the kind its status means', async () => {
     mockProductive({ 'GET tasks/9': () => Response.json({ errors: [{ detail: 'The requested record was not found' }] }, { status: 404 }) });
     const result = await callTool('get_task', { task_id: '9' });
     expect(result.isError).toBe(true);
@@ -377,15 +404,29 @@ describe('logging', () => {
       expect.objectContaining({
         level: 'info',
         event: 'mcp.tool',
-        toolError: 'productive_404',
-        productiveFailures: 1,
+        toolError: 'not_found',
+        productiveCalls: 1,
+        productiveFailed: 1,
         productiveStatus: 404,
         result: 'ok',
       }),
     ]);
   });
 
-  test('a Productive 5xx or 429 fails the call at error', async () => {
+  test.each([
+    [400, 'invalid_input'],
+    [401, 'not_configured'],
+    [403, 'forbidden'],
+    [409, 'conflict'],
+    [410, 'not_found'],
+    [422, 'invalid_input'],
+  ])('a Productive %i is %s', async (status, kind) => {
+    mockProductive({ 'GET tasks': () => Response.json({ errors: [{ detail: 'Nope' }] }, { status }) });
+    await callTool('list_tasks', {});
+    expect(lines().slice(-1)[0]).toMatchObject({ level: 'info', event: 'mcp.tool', toolError: kind, toolMessage: 'Nope', result: 'ok' });
+  });
+
+  test('a Productive 429 is rate_limited, and the call fails at error', async () => {
     mockProductive({ 'GET tasks': () => new Response('busy', { status: 429, headers: { 'retry-after': '10' } }) });
     const result = await callTool('list_tasks', {});
     expect(result.isError).toBe(true);
@@ -395,14 +436,38 @@ describe('logging', () => {
         level: 'error',
         event: 'mcp.tool',
         tool: 'list_tasks',
+        toolError: 'rate_limited',
         productiveStatus: 429,
+        productiveFailed: 1,
         result: 'failed',
         error: expect.objectContaining({ message: 'API request failed with status 429' }),
       }),
     ]);
   });
 
-  test('a call that saved some changes before failing is partial', async () => {
+  test('a Productive 5xx or a status no kind fits fails the call at error', async () => {
+    for (const status of [502, 405]) {
+      mockProductive({ 'GET tasks': () => new Response('down', { status }) });
+      await callTool('list_tasks', {});
+      const line = lines().slice(-1)[0]!;
+      expect(line).toMatchObject({ level: 'error', event: 'mcp.tool', productiveStatus: status, result: 'failed' });
+      expect(line).not.toHaveProperty('toolError');
+    }
+  });
+
+  test('a failed merged update logs the cause, not the saved changes its message lists', async () => {
+    let patches = 0;
+    mockProductive({
+      'PATCH tasks/1': () => (++patches === 1 ? task({ title: 'Secret plan' }) : new Response('down', { status: 502 })),
+    });
+    const result = await callTool('update_task', { task_id: '1', title: 'Secret plan', assignee_id: '999' });
+    expect(textOf(result)).toContain('Secret plan');
+    const line = lines().slice(-1)[0]!;
+    expect(line).toMatchObject({ level: 'error', event: 'mcp.tool', writes: ['PATCH tasks/1'], result: 'failed' });
+    expect(JSON.stringify(line)).not.toContain('Secret plan');
+  });
+
+  test('a call that saved some changes before failing is a tool error that lists the writes', async () => {
     let patches = 0;
     mockProductive({
       'PATCH tasks/1': () =>
@@ -410,12 +475,14 @@ describe('logging', () => {
     });
     await callTool('update_task', { task_id: '1', title: 'Renamed', assignee_id: '999' });
     expect(lines().slice(-1)[0]).toMatchObject({
-      level: 'warn',
+      level: 'info',
       event: 'mcp.tool',
       writes: ['PATCH tasks/1'],
-      toolError: 'productive_422',
+      toolError: 'invalid_input',
       toolMessage: 'assignee not found',
-      result: 'partial',
+      productiveCalls: 2,
+      productiveFailed: 1,
+      result: 'ok',
     });
   });
 });

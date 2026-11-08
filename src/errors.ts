@@ -9,14 +9,24 @@ export enum ErrorCode {
   InternalError = -32603,
 }
 
+/** A `toolError` kind (logging convention, "MCP tool calls"). */
+export type ToolErrorKind =
+  | "invalid_input"
+  | "not_found"
+  | "forbidden"
+  | "conflict"
+  | "upstream"
+  | "rate_limited"
+  | "not_configured";
+
 // Most tools catch everything and rethrow it as McpError(InternalError, message), so by the time
 // a throw reaches the mcp.tool unit its kind is gone. An McpError for bad input or a request the
-// tool refuses therefore notes itself on the unit it was created in, and the unit logs the call
-// as a tool error the model can fix, not a failure.
-const refusals = new WeakMap<Unit, "invalid_params" | "invalid_request">();
+// tool refuses therefore notes its kind on the unit it was created in, and the unit logs the call
+// as a tool error, not a failure.
+const refusals = new WeakMap<Unit, ToolErrorKind>();
 
-/** Whether the current unit created an McpError for bad input or a refused request, and which. */
-export function noteOfRefusal(): "invalid_params" | "invalid_request" | undefined {
+/** The kind of the McpError for bad input or a refused request the current unit created, if any. */
+export function noteOfRefusal(): ToolErrorKind | undefined {
   const unit = getUnit();
   return unit && refusals.get(unit);
 }
@@ -25,12 +35,17 @@ export class McpError extends Error {
   constructor(
     readonly code: ErrorCode,
     message: string,
-    readonly data?: unknown,
+    /**
+     * The kind the mcp.tool line logs, for InvalidParams and InvalidRequest; `invalid_input`
+     * unless given (`not_configured` for a credential or mapping someone at functn must set up).
+     */
+    kind?: ToolErrorKind,
   ) {
     super(message);
     this.name = "McpError";
     const unit = getUnit();
-    if (unit && code === ErrorCode.InvalidParams) refusals.set(unit, "invalid_params");
-    else if (unit && code === ErrorCode.InvalidRequest) refusals.set(unit, "invalid_request");
+    if (unit && (code === ErrorCode.InvalidParams || code === ErrorCode.InvalidRequest)) {
+      refusals.set(unit, kind ?? "invalid_input");
+    }
   }
 }

@@ -1,11 +1,11 @@
-import { McpServer, type StandardSchemaWithJSON } from '@modelcontextprotocol/server';
+import { McpServer, type StandardSchemaV1, type StandardSchemaWithJSON } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { type Config } from './config/index.js';
 import { ProductiveAPIClient } from './api/client.js';
 import type { AttachmentLinkSigner } from './attachment-links.js';
-import { productiveStats } from './api/fetch.js';
-import { noteOfRefusal } from './errors.js';
-import { unit } from './lib/log.js';
+import { productiveNotes } from './api/fetch.js';
+import { McpError, noteOfRefusal, type ToolErrorKind } from './errors.js';
+import { log, unit } from './lib/log.js';
 import type { RegisterTools, ToolContext } from './tools/context.js';
 import { registerWhoamiTools } from './tools/whoami.js';
 import { registerUserTools } from './tools/users.js';
@@ -90,18 +90,69 @@ export function createMcpServer(config: Config, attachmentLinks?: AttachmentLink
   return server;
 }
 
-// A Productive answer with one of these statuses means the model asked for something that doesn't
-// exist, isn't allowed or doesn't validate: the model can fix it, so the call is a tool error, not
-// a failure. 401 (token rejected), 429 and 5xx fail the call.
-const MODEL_FIXABLE_STATUSES = new Set([400, 403, 404, 409, 410, 422]);
+/**
+ * The kind a Productive status means for the model (logging convention, "MCP tool calls"), or
+ * undefined when none fits: 5xx, no answer (0) and anything else fail the call.
+ */
+function kindOfStatus(status: number): ToolErrorKind | undefined {
+  if (status === 400 || status === 422) return 'invalid_input';
+  // The Productive token from USER_MAPPING was rejected: someone at functn has to replace it.
+  if (status === 401) return 'not_configured';
+  if (status === 403) return 'forbidden';
+  if (status === 404 || status === 410) return 'not_found';
+  if (status === 409) return 'conflict';
+  if (status === 429) return 'rate_limited';
+  return undefined;
+}
 
-/** Why a thrown tool call is the model's to fix, or undefined when it is a failure. */
-function toolErrorOf(): string | undefined {
-  const stats = productiveStats();
-  if (stats?.lastFailedStatus !== undefined) {
-    return MODEL_FIXABLE_STATUSES.has(stats.lastFailedStatus) ? `productive_${stats.lastFailedStatus}` : undefined;
+/**
+ * Why a thrown tool call is a tool error, or undefined when it is a failure. A failed Productive
+ * call decides it (with Productive's message as `toolMessage`); otherwise an McpError the tool
+ * created for bad input or a refused request.
+ */
+function toolErrorOf(): { toolError: ToolErrorKind; toolMessage?: string } | undefined {
+  const notes = productiveNotes();
+  if (notes?.lastFailedStatus !== undefined) {
+    const toolError = kindOfStatus(notes.lastFailedStatus);
+    return toolError && { toolError, toolMessage: notes.lastFailedMessage };
   }
-  return noteOfRefusal();
+  const toolError = noteOfRefusal();
+  return toolError && { toolError };
+}
+
+/**
+ * What a failed mcp.tool line logs as `error`: an McpError with a cause quotes the tool's output
+ * in its message (runSteps lists what it saved), so the line gets the cause instead.
+ */
+const loggable = (error: unknown) => (error instanceof McpError && error.cause !== undefined ? error.cause : error);
+
+/** An error result the tool built itself, so nothing says what kind it was. */
+class UnreportedToolError extends Error {
+  override name = 'UnreportedToolError';
+}
+
+type ToolResult = { isError?: boolean; content?: Array<{ type: string; text?: string }> };
+
+const textOf = (result: ToolResult) =>
+  (result.content ?? []).flatMap((part) => (part.type === 'text' && part.text ? [part.text] : [])).join(' ') || '(no text)';
+
+/** Issues on one mcp.tool line. */
+const MAX_ISSUES = 10;
+
+type Issue = StandardSchemaV1.Issue & { code?: unknown; expected?: unknown; received?: unknown };
+
+/**
+ * Where the arguments broke the input schema and how, never their values (logging convention,
+ * "MCP tool calls"): zod's messages name the expected type or options, not the input.
+ */
+function issueFields(issues: ReadonlyArray<StandardSchemaV1.Issue>) {
+  return issues.slice(0, MAX_ISSUES).map((issue: Issue) => ({
+    path: (issue.path ?? []).map((segment) => (typeof segment === 'object' ? segment.key : segment)).join('.'),
+    ...(typeof issue.code === 'string' && { code: issue.code }),
+    message: issue.message,
+    ...(typeof issue.expected === 'string' && { expected: issue.expected }),
+    ...(typeof issue.received === 'string' && { received: issue.received }),
+  }));
 }
 
 /** The ids a tool was called with (`task_id` → `taskId`), never its other arguments (bodies, notes). */
@@ -118,60 +169,83 @@ function idFields(args: unknown): Record<string, unknown> {
 
 /**
  * Wraps registerTool so every call is one mcp.tool unit (logging convention, lib/log.ts): the
- * tool, the actor, the ids it was called with, its Productive calls (count, time, failed status)
- * and what it changed (`writes`). A call the model can fix (bad input, a Productive 4xx) is a
- * `toolError`; anything else thrown is a failed unit at error. Tool schemas go out without
- * "$schema".
+ * tool, the actor, the ids it was called with, its Productive calls (productiveCalls, -Ms,
+ * -Failed, the last failed productiveStatus) and what it changed (`writes`). A call the model can
+ * act on (bad input, a Productive 4xx) is `toolError` with a kind on an `ok` line; a Productive 429
+ * is `rate_limited` too, but the person got nothing, so the unit fails. Anything no kind fits is a
+ * failed unit at error. Arguments the input schema rejects never reach the tool: withoutSchemaUri's
+ * validate writes their mcp.tool line. Tool schemas go out without "$schema".
  */
 function logToolCalls(server: McpServer, config: Config): void {
   const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
   (server as { registerTool: unknown }).registerTool = (
     name: string,
     toolConfig: { inputSchema?: StandardSchemaWithJSON },
-    callback: (...args: unknown[]) => Promise<{ isError?: boolean }>
-  ) =>
-    register(name, { ...toolConfig, inputSchema: toolConfig.inputSchema && withoutSchemaUri(toolConfig.inputSchema) }, async (...args: unknown[]) => {
+    callback: (...args: unknown[]) => Promise<ToolResult>
+  ) => {
+    const context = { tool: name, actor: config.PRODUCTIVE_USER_EMAIL, actorPersonId: config.PRODUCTIVE_USER_ID };
+    const inputSchema =
+      toolConfig.inputSchema &&
+      withoutSchemaUri(toolConfig.inputSchema, (issues, durationMs) =>
+        log.info('mcp.tool', {
+          ...context,
+          result: 'ok',
+          toolError: 'invalid_input',
+          issues: issueFields(issues),
+          ...(issues.length > MAX_ISSUES && { issueCount: issues.length }),
+          durationMs,
+        })
+      );
+    return register(name, { ...toolConfig, inputSchema }, async (...args: unknown[]) => {
       // McpServer turns a throw into an isError result for the model; it is rethrown after the
       // unit so that stays as it was, and the unit decides how it is logged.
       let thrown: { error: unknown } | undefined;
-      const result = await unit(
-        'mcp.tool',
-        { tool: name, actor: config.PRODUCTIVE_USER_EMAIL, actorPersonId: config.PRODUCTIVE_USER_ID, ...idFields(args[0]) },
-        async (u) => {
-          try {
-            const result = await callback(...args);
-            if (result.isError) u.set({ toolError: 'tool' });
-            return result;
-          } catch (error) {
-            thrown = { error };
-            const toolError = toolErrorOf();
-            if (!toolError) {
-              u.fail(error);
-              return undefined;
-            }
-            u.set({ toolError, toolMessage: toolError.startsWith('productive_') ? productiveStats()?.lastFailedMessage : undefined });
-            // Some changes were saved before the call failed (a merged update tool).
-            if (productiveStats()?.writes.length) u.result('partial');
+      const result = await unit('mcp.tool', { ...context, ...idFields(args[0]) }, async (u) => {
+        try {
+          const result = await callback(...args);
+          // No tool builds its own error result today; one that did would say nothing of its kind.
+          if (result.isError) u.fail(new UnreportedToolError(textOf(result)));
+          return result;
+        } catch (error) {
+          thrown = { error };
+          const toolError = toolErrorOf();
+          if (!toolError) {
+            u.fail(loggable(error));
             return undefined;
           }
+          // Changes saved before the call failed (a merged update tool) are in `writes`.
+          u.set(toolError);
+          // A rate limit the call didn't ride out leaves the person with nothing.
+          if (toolError.toolError === 'rate_limited') u.fail(loggable(error));
+          return undefined;
         }
-      );
+      });
       if (thrown) throw thrown.error;
       return result;
     });
+  };
 }
 
 /**
  * zod puts "$schema": "https://json-schema.org/draft/2020-12/schema" into every tool's JSON
  * Schema; the spec already defaults to 2020-12, so it is ~850 tokens of tools/list for nothing.
+ * `rejected` hears of arguments the schema turns down: the SDK then answers the model itself.
  */
-function withoutSchemaUri(schema: StandardSchemaWithJSON): StandardSchemaWithJSON {
+function withoutSchemaUri(
+  schema: StandardSchemaWithJSON,
+  rejected: (issues: ReadonlyArray<StandardSchemaV1.Issue>, durationMs: number) => void
+): StandardSchemaWithJSON {
   const standard = schema['~standard'];
   const strip = ({ $schema: _, ...rest }: Record<string, unknown>) => rest;
   return {
     '~standard': {
       ...standard,
-      validate: (value) => standard.validate(value),
+      validate: async (value) => {
+        const started = Date.now();
+        const result = await standard.validate(value);
+        if (result.issues?.length) rejected(result.issues, Date.now() - started);
+        return result;
+      },
       jsonSchema: {
         input: (options) => strip(standard.jsonSchema.input(options)),
         output: (options) => strip(standard.jsonSchema.output(options)),
