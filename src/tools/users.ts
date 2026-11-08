@@ -24,6 +24,7 @@ export async function listUsers(
       throw new McpError(
         ErrorCode.InvalidRequest,
         'list_users requires an admin API token. Flag at least one USER_MAPPING entry with "isAdmin": true.',
+        'not_configured',
       );
     }
 

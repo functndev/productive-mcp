@@ -1,4 +1,4 @@
-import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
+import { OAuthError, OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { handleAccessRequest, recheckOnRefresh } from "./access-handler.js";
 import { allowedRegistration, isAllowedRedirectUri } from "./clients.js";
@@ -97,16 +97,19 @@ function getProvider(env: Env): OAuthProvider<Env> {
         : { code: "invalid_redirect_uri", description: "Only Claude and local MCP clients may register with this server." },
     tokenExchangeCallback: recheckOnRefresh,
     // Instead of the library's plain-text "OAuth error response" warn. Refusals from
-    // recheckOnRefresh are already on its oauth.refresh line.
+    // recheckOnRefresh are already on its oauth.refresh line. A 4xx is a refusal (an expired code,
+    // a revoked grant), so `info`; a 503 is a dependency unreachable and the client retrying, so
+    // `warn`; any other 5xx is a failure.
     onError: ({ status, code, description, internal }) => {
       if (internal.category === "token-exchange-callback") return;
-      log.warn("oauth.error_response", {
-        status,
+      log[status < 500 ? "info" : status === 503 ? "warn" : "error"]("oauth.error_response", {
+        statusCode: status,
         code,
         description,
         category: internal.category,
         reason: internal.reason,
-        ...(internal.detail instanceof Error && { error: internal.detail }),
+        // What broke, for a callback that threw; a refusal's own OAuthError says nothing more.
+        ...(internal.detail instanceof Error && !(internal.detail instanceof OAuthError) && { error: internal.detail }),
       });
     },
   });

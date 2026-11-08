@@ -56,6 +56,21 @@ describe('discovery', () => {
     );
   });
 
+  test('a refused OAuth request is an info line with its status', async () => {
+    const info = spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const response = await get('/register');
+      expect(response.status).toBe(405);
+      expect(JSON.parse(String(info.mock.calls.slice(-1)[0]?.[0]))).toMatchObject({
+        event: 'oauth.error_response',
+        statusCode: 405,
+        code: 'invalid_request',
+      });
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   test('refuses to sign in clients outside the allowlist', async () => {
     const response = await get('/authorize?client_id=x&response_type=code&redirect_uri=https%3A%2F%2Fevil.example%2Fcb');
     expect(response.status).toBe(400);
@@ -75,7 +90,7 @@ describe('recheckOnRefresh', () => {
     info.mockRestore();
     warn.mockRestore();
   });
-  const refreshLine = () => JSON.parse(String(info.mock.calls.at(-1)?.[0]));
+  const refreshLine = () => JSON.parse(String(info.mock.calls.slice(-1)[0]?.[0]));
 
   const grant = (extra: Partial<Props> = {}): Props => ({
     accessToken: 'old',
@@ -115,7 +130,7 @@ describe('recheckOnRefresh', () => {
     expect(newProps.productiveApiToken).toBe('rotated-token');
     expect(newProps.adminApiToken).toBe('admin-token');
     expect(newProps.accessRefreshToken).toBe('access-2');
-    expect(refreshLine()).toMatchObject({ event: 'oauth.refresh', actor: 'me@functn.com', granted: true, accessRotated: true });
+    expect(refreshLine()).toMatchObject({ event: 'oauth.refresh', actor: 'me@functn.com', result: 'ok', accessRotated: true });
     expect(JSON.stringify(info.mock.calls)).not.toContain('access-2');
   });
 
@@ -124,9 +139,9 @@ describe('recheckOnRefresh', () => {
     expect(refreshLine()).toMatchObject({
       event: 'oauth.refresh',
       actor: 'gone@functn.com',
-      granted: false,
+      result: 'skipped',
+      statusCode: 400,
       reason: 'not_in_user_mapping',
-      result: 'ok',
     });
   });
 
@@ -147,7 +162,7 @@ describe('recheckOnRefresh', () => {
     accessAnswers(new Error('network down'));
     expect(await oauthCode(refresh(grant({ accessRefreshToken: 'access-1' })))).toBe('temporarily_unavailable');
     expect(JSON.parse(String(warn.mock.calls.at(-1)?.[0]))).toMatchObject({ event: 'oauth.access_unavailable' });
-    expect(refreshLine()).toMatchObject({ granted: false, reason: 'access_unavailable' });
+    expect(refreshLine()).toMatchObject({ result: 'skipped', statusCode: 503, reason: 'access_unavailable' });
     accessAnswers(new Response('oops', { status: 502 }));
     expect(await oauthCode(refresh(grant({ accessRefreshToken: 'access-1' })))).toBe('temporarily_unavailable');
   });
