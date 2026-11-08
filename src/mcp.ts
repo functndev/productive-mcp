@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { type Config } from './config/index.js';
 import { ProductiveAPIClient } from './api/client.js';
 import type { AttachmentLinkSigner } from './attachment-links.js';
+import { productiveStats } from './api/fetch.js';
+import { noteOfRefusal } from './errors.js';
+import { unit } from './lib/log.js';
 import type { RegisterTools, ToolContext } from './tools/context.js';
 import { registerWhoamiTools } from './tools/whoami.js';
 import { registerUserTools } from './tools/users.js';
@@ -87,9 +90,38 @@ export function createMcpServer(config: Config, attachmentLinks?: AttachmentLink
   return server;
 }
 
+// A Productive answer with one of these statuses means the model asked for something that doesn't
+// exist, isn't allowed or doesn't validate: the model can fix it, so the call is a tool error, not
+// a failure. 401 (token rejected), 429 and 5xx fail the call.
+const MODEL_FIXABLE_STATUSES = new Set([400, 403, 404, 409, 410, 422]);
+
+/** Why a thrown tool call is the model's to fix, or undefined when it is a failure. */
+function toolErrorOf(): string | undefined {
+  const stats = productiveStats();
+  if (stats?.lastFailedStatus !== undefined) {
+    return MODEL_FIXABLE_STATUSES.has(stats.lastFailedStatus) ? `productive_${stats.lastFailedStatus}` : undefined;
+  }
+  return noteOfRefusal();
+}
+
+/** The ids a tool was called with (`task_id` → `taskId`), never its other arguments (bodies, notes). */
+function idFields(args: unknown): Record<string, unknown> {
+  if (!args || typeof args !== 'object') return {};
+  const fields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (!/(_id|_ids|Id)$/.test(key)) continue;
+    if (typeof value !== 'string' && typeof value !== 'number' && !Array.isArray(value)) continue;
+    fields[key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())] = value;
+  }
+  return fields;
+}
+
 /**
- * Wraps registerTool so every call logs one tool_call line (same shape as functn-tracking-mcp),
- * which is what Grafana counts tool usage from, and so tool schemas go out without "$schema".
+ * Wraps registerTool so every call is one mcp.tool unit (logging convention, lib/log.ts): the
+ * tool, the actor, the ids it was called with, its Productive calls (count, time, failed status)
+ * and what it changed (`writes`). A call the model can fix (bad input, a Productive 4xx) is a
+ * `toolError`; anything else thrown is a failed unit at error. Tool schemas go out without
+ * "$schema".
  */
 function logToolCalls(server: McpServer, config: Config): void {
   const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
@@ -99,28 +131,33 @@ function logToolCalls(server: McpServer, config: Config): void {
     callback: (...args: unknown[]) => Promise<{ isError?: boolean }>
   ) =>
     register(name, { ...toolConfig, inputSchema: toolConfig.inputSchema && withoutSchemaUri(toolConfig.inputSchema) }, async (...args: unknown[]) => {
-      const startedAt = Date.now();
-      const logCall = (outcome: 'ok' | 'error', error?: string) =>
-        // console.log, not console.error: the logging tail worker drops error-level lines of
-        // invocations whose client disconnected.
-        console.log(JSON.stringify({
-          event: 'tool_call',
-          tool: name,
-          userId: config.PRODUCTIVE_USER_ID,
-          userEmail: config.PRODUCTIVE_USER_EMAIL,
-          durationMs: Date.now() - startedAt,
-          outcome,
-          ...(error !== undefined && { error }),
-          args: args[0] ?? null,
-        }));
-      try {
-        const result = await callback(...args);
-        logCall(result.isError ? 'error' : 'ok');
-        return result;
-      } catch (error) {
-        logCall('error', error instanceof Error ? error.message : String(error));
-        throw error;
-      }
+      // McpServer turns a throw into an isError result for the model; it is rethrown after the
+      // unit so that stays as it was, and the unit decides how it is logged.
+      let thrown: { error: unknown } | undefined;
+      const result = await unit(
+        'mcp.tool',
+        { tool: name, actor: config.PRODUCTIVE_USER_EMAIL, actorPersonId: config.PRODUCTIVE_USER_ID, ...idFields(args[0]) },
+        async (u) => {
+          try {
+            const result = await callback(...args);
+            if (result.isError) u.set({ toolError: 'tool' });
+            return result;
+          } catch (error) {
+            thrown = { error };
+            const toolError = toolErrorOf();
+            if (!toolError) {
+              u.fail(error);
+              return undefined;
+            }
+            u.set({ toolError, toolMessage: toolError.startsWith('productive_') ? productiveStats()?.lastFailedMessage : undefined });
+            // Some changes were saved before the call failed (a merged update tool).
+            if (productiveStats()?.writes.length) u.result('partial');
+            return undefined;
+          }
+        }
+      );
+      if (thrown) throw thrown.error;
+      return result;
     });
 }
 

@@ -1,4 +1,6 @@
 import { ProductiveAPIClient } from "./api/client.js";
+import { ProductiveApiError } from "./api/fetch.js";
+import { log } from "./lib/log.js";
 import { parseConfig } from "./config/index.js";
 import { parseUserMapping } from "./access-handler.js";
 
@@ -175,7 +177,8 @@ export async function handleAttachmentDownload(request: Request, env: Env): Prom
     if (length) headers.set("Content-Length", length);
     return new Response(file.body, { status: 200, headers });
   } catch (error) {
-    console.error(`Attachment download ${attachmentId} failed:`, error);
+    // A failed Productive answer already has its warn line (api/fetch.ts); anything else is a bug.
+    if (!(error instanceof ProductiveApiError)) log.error("attachment.download_failed", { attachmentId, error });
     return textResponse(502, "Could not fetch the attachment from Productive");
   }
 }

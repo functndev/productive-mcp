@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
+import { productiveFetch } from '../api/fetch.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveTaskUpdate, ProductiveIncludedResource, ProductiveAttachment } from '../api/types.js';
 import { formatAttachmentList } from './attachments.js';
@@ -116,7 +117,7 @@ export async function getTaskTool(
     const url = `${config.PRODUCTIVE_API_BASE_URL}tasks/${params.task_id}?include=task_list,assignee,workflow_status,attachments`;
     
     // Create request with proper headers from config
-    const response = await fetch(url, {
+    const response = await productiveFetch(url, {
       method: 'GET',
       headers: {
         'X-Auth-Token': config.PRODUCTIVE_API_TOKEN,

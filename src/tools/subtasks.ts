@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
+import { productiveFetch } from '../api/fetch.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveIncludedResource } from '../api/types.js';
 import { READ, WRITE, result, resolveMe, type RegisterTools } from './context.js';
@@ -38,7 +39,7 @@ export async function listSubtasksTool(
     const page = params.page ?? 1;
     const url = `${config.PRODUCTIVE_API_BASE_URL}tasks?filter[parent_task_id]=${params.parent_task_id}&include=assignee,workflow_status&page[size]=${limit}&page[number]=${page}`;
 
-    const response = await fetch(url, {
+    const response = await productiveFetch(url, {
       method: 'GET',
       headers: {
         'X-Auth-Token': config.PRODUCTIVE_API_TOKEN,

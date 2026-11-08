@@ -26,7 +26,7 @@ function parseTimeToMinutes(timeInput: string): number {
     return Math.round(parseFloat(decimalMatch[1]) * 60);
   }
   
-  throw new Error(`Invalid time format: ${timeInput}. Use formats like "2h", "120m", or "2.5"`);
+  throw new McpError(ErrorCode.InvalidParams, `Invalid time format: ${timeInput}. Use formats like "2h", "120m", or "2.5"`);
 }
 
 // Helper function to parse date input
@@ -52,13 +52,13 @@ function parseDate(dateInput: string): string {
     
     // Basic validation
     if (month < 1 || month > 12 || day < 1 || day > 31) {
-      throw new Error(`Invalid date: ${dateInput}`);
+      throw new McpError(ErrorCode.InvalidParams, `Invalid date: ${dateInput}`);
     }
     
     return input;
   }
   
-  throw new Error(`Invalid date format: ${dateInput}. Use "today", "yesterday", or YYYY-MM-DD format`);
+  throw new McpError(ErrorCode.InvalidParams, `Invalid date format: ${dateInput}. Use "today", "yesterday", or YYYY-MM-DD format`);
 }
 
 export const listTimeEntriesSchema = z.object({

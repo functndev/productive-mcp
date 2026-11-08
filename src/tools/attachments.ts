@@ -201,7 +201,8 @@ export async function getAttachmentTool(
       const useThumb = (wantsThumb || tooLarge) && !!a.thumb;
 
       if (tooLarge && !a.thumb) {
-        throw new Error(
+        throw new McpError(
+          ErrorCode.InvalidRequest,
           `Attachment ${label} is larger than the ${formatSize(MAX_IMAGE_BYTES)} inline limit and has no thumbnail available. Open it in Productive instead: ${a.url}`
         );
       }
@@ -211,7 +212,8 @@ export async function getAttachmentTool(
       );
 
       if (bytes.byteLength > MAX_IMAGE_BYTES) {
-        throw new Error(
+        throw new McpError(
+          ErrorCode.InvalidRequest,
           `Attachment ${label} is ${formatSize(bytes.byteLength)}, above the ${formatSize(MAX_IMAGE_BYTES)} inline limit. Retry with thumbnail: true, or open it in Productive: ${a.url}`
         );
       }
@@ -276,7 +278,8 @@ export async function getAttachmentTool(
     }
 
     if (typeof a.size === 'number' && a.size > MAX_RAW_BYTES) {
-      throw new Error(
+      throw new McpError(
+        ErrorCode.InvalidRequest,
         `Attachment ${label} is larger than the ${formatSize(MAX_RAW_BYTES)} limit for returning the file. Open it in Productive instead: ${a.url}`
       );
     }
@@ -284,7 +287,8 @@ export async function getAttachmentTool(
     const { bytes, contentType } = await client.downloadAttachmentFile(a.url);
 
     if (bytes.byteLength > MAX_RAW_BYTES) {
-      throw new Error(
+      throw new McpError(
+        ErrorCode.InvalidRequest,
         `Attachment ${label} is ${formatSize(bytes.byteLength)}, above the ${formatSize(MAX_RAW_BYTES)} limit for returning the file. Open it in Productive instead: ${a.url}`
       );
     }

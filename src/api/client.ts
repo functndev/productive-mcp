@@ -35,6 +35,8 @@ import {
   ProductiveAttachment,
   ProductiveError,
 } from "./types.js";
+import { log } from "../lib/log.js";
+import { productiveFetch, ProductiveApiError, recordWrite } from "./fetch.js";
 
 export class ProductiveAPIClient {
   private config: Config;
@@ -60,42 +62,41 @@ export class ProductiveAPIClient {
     options?: RequestInit,
   ): Promise<T> {
     const url = `${this.config.PRODUCTIVE_API_BASE_URL}${path}`;
+    const method = options?.method ?? "GET";
 
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers: {
-          ...this.getHeaders(),
-          ...options?.headers,
-        },
-      });
+    const response = await productiveFetch(url, {
+      ...options,
+      headers: {
+        ...this.getHeaders(),
+        ...options?.headers,
+      },
+    });
 
-      if (!response.ok) {
-        const errorData = (await response.json()) as ProductiveError;
-        console.error(
-          `API Error [${response.status}] ${options?.method ?? 'GET'} ${url}:`,
-          JSON.stringify(errorData, null, 2),
-        );
-        const errorMessage = errorData.errors?.length
-          ? errorData.errors.map(e => {
-              const field = e.source?.pointer
-                ? ` [field: ${e.source.pointer}]`
-                : e.source?.parameter
-                  ? ` [param: ${e.source.parameter}]`
-                  : '';
-              return `${e.detail || e.title || 'Unknown error'}${field}`;
-            }).join('; ')
-          : `API request failed with status ${response.status}`;
-        throw new Error(errorMessage);
+    if (!response.ok) {
+      let errorData: ProductiveError = {} as ProductiveError;
+      try {
+        errorData = (await response.json()) as ProductiveError;
+      } catch {
+        /* no JSON body */
       }
-
-      return (await response.json()) as T;
-    } catch (error) {
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error("Unknown error occurred while making API request", { cause: error });
+      const errorMessage = errorData.errors?.length
+        ? errorData.errors.map(e => {
+            const field = e.source?.pointer
+              ? ` [field: ${e.source.pointer}]`
+              : e.source?.parameter
+                ? ` [param: ${e.source.parameter}]`
+                : '';
+            return `${e.detail || e.title || 'Unknown error'}${field}`;
+          }).join('; ')
+        : `API request failed with status ${response.status}`;
+      throw new ProductiveApiError(errorMessage, response.status);
     }
+
+    const body = (await response.json()) as T;
+    if (method !== "GET") {
+      recordWrite(method, url, (body as { data?: { type?: string; id?: string } } | undefined)?.data);
+    }
+    return body;
   }
 
   private async makeVoidRequest(
@@ -104,7 +105,7 @@ export class ProductiveAPIClient {
   ): Promise<void> {
     const url = `${this.config.PRODUCTIVE_API_BASE_URL}${path}`;
 
-    const response = await fetch(url, {
+    const response = await productiveFetch(url, {
       ...options,
       headers: {
         ...this.getHeaders(),
@@ -120,8 +121,9 @@ export class ProductiveAPIClient {
       } catch {
         /* no JSON body */
       }
-      throw new Error(errorMessage);
+      throw new ProductiveApiError(errorMessage, response.status);
     }
+    recordWrite(options?.method ?? "GET", url);
   }
 
   async listCompanies(params?: {
@@ -837,51 +839,49 @@ export class ProductiveAPIClient {
     // The reposition endpoint returns 204 No Content on success
     const url = `${this.config.PRODUCTIVE_API_BASE_URL}tasks/${taskId}/reposition`;
 
-    try {
-      const response = await fetch(url, {
-        method: "PATCH",
-        headers: {
-          "X-Auth-Token": this.config.PRODUCTIVE_API_TOKEN,
-          "X-Organization-Id": this.config.PRODUCTIVE_ORG_ID,
-          "Content-Type": "application/vnd.api+json",
-        },
-        body: JSON.stringify(requestBody),
-      });
+    const response = await productiveFetch(url, {
+      method: "PATCH",
+      headers: {
+        "X-Auth-Token": this.config.PRODUCTIVE_API_TOKEN,
+        "X-Organization-Id": this.config.PRODUCTIVE_ORG_ID,
+        "Content-Type": "application/vnd.api+json",
+      },
+      body: JSON.stringify(requestBody),
+    });
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error(
-            `Task ${taskId} not found or cannot be repositioned.`,
-          );
-        }
-        throw new Error(
-          `Reposition failed with status ${response.status}: ${response.statusText}`,
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new ProductiveApiError(
+          `Task ${taskId} not found or cannot be repositioned.`,
+          404,
         );
       }
+      throw new ProductiveApiError(
+        `Reposition failed with status ${response.status}: ${response.statusText}`,
+        response.status,
+      );
+    }
+    recordWrite("PATCH", url);
 
-      // If 204 No Content (success), return a minimal success response
-      if (response.status === 204) {
-        return {
-          success: true,
-          taskId: taskId,
-          message: `Task ${taskId} repositioned successfully`,
-        };
-      }
+    // If 204 No Content (success), return a minimal success response
+    if (response.status === 204) {
+      return {
+        success: true,
+        taskId: taskId,
+        message: `Task ${taskId} repositioned successfully`,
+      };
+    }
 
-      // For any other success response with content, try to parse JSON
-      try {
-        return await response.json();
-      } catch {
-        // If parsing fails but status was success, return a minimal success object
-        return {
-          success: true,
-          taskId: taskId,
-          message: `Task ${taskId} repositioned successfully`,
-        };
-      }
-    } catch (error) {
-      console.error("Error repositioning task:", error);
-      throw error;
+    // For any other success response with content, try to parse JSON
+    try {
+      return await response.json();
+    } catch {
+      // If parsing fails but status was success, return a minimal success object
+      return {
+        success: true,
+        taskId: taskId,
+        message: `Task ${taskId} repositioned successfully`,
+      };
     }
   }
 
@@ -1429,11 +1429,12 @@ export class ProductiveAPIClient {
     const separator = fileUrl.includes("?") ? "&" : "?";
     const authedUrl = `${fileUrl}${separator}token=${encodeURIComponent(this.config.PRODUCTIVE_API_TOKEN)}`;
 
-    const response = await fetch(authedUrl);
+    const response = await productiveFetch(authedUrl);
 
     if (!response.ok) {
-      throw new Error(
+      throw new ProductiveApiError(
         `Failed to download attachment file (status ${response.status})`,
+        response.status,
       );
     }
 
@@ -1447,8 +1448,10 @@ export class ProductiveAPIClient {
       !fileUrl.split("?")[0].toLowerCase().endsWith(".html");
     if (landedOnLogin || unexpectedHtml) {
       await response.body?.cancel();
-      throw new Error(
+      log.warn("productive.attachment_login_redirect", { path: new URL(fileUrl).pathname });
+      throw new ProductiveApiError(
         "Attachment download was redirected to the Productive login page - the API token is not authorised for this file.",
+        403,
       );
     }
 
