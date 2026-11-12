@@ -1,18 +1,13 @@
-import config from "../cloudflare.config";
-
-// The admin's token from USER_MAPPING (.env), the org ID from cloudflare.config.ts.
-const mapping: Record<string, { apiToken?: string; isAdmin?: boolean }> = JSON.parse(
-  process.env.USER_MAPPING ?? "{}",
-);
-const adminToken =
-  process.env.PRODUCTIVE_API_TOKEN ??
-  Object.values(mapping).find((entry) => entry.isAdmin)?.apiToken;
+// A local check of the people query list_users makes, with a Productive token of your own
+// (PRODUCTIVE_API_TOKEN). The Worker itself makes it as "productive-bot" through apps.functn.com.
+const adminToken = process.env.PRODUCTIVE_API_TOKEN;
 if (!adminToken) {
-  console.error("No admin in USER_MAPPING (.env) and no PRODUCTIVE_API_TOKEN set");
+  console.error("Set PRODUCTIVE_API_TOKEN to a Productive API token");
   process.exit(1);
 }
 const token: string = adminToken;
-const orgId = config.worker.env.PRODUCTIVE_ORG_ID.value;
+// functn's Productive organization.
+const orgId = process.env.PRODUCTIVE_ORG_ID ?? "3591";
 const baseUrl = "https://api.productive.io/api/v2/".replace(/\/?$/, "/");
 
 async function main() {

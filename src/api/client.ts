@@ -48,12 +48,9 @@ export class ProductiveAPIClient {
     return this.config;
   }
 
+  /** Connections adds the person's token and the organization (api/transport.ts). */
   private getHeaders(): HeadersInit {
-    return {
-      "X-Auth-Token": this.config.PRODUCTIVE_API_TOKEN,
-      "X-Organization-Id": this.config.PRODUCTIVE_ORG_ID,
-      "Content-Type": "application/vnd.api+json",
-    };
+    return { "Content-Type": "application/vnd.api+json" };
   }
 
   private async makeRequest<T>(
@@ -63,7 +60,7 @@ export class ProductiveAPIClient {
     const url = `${this.config.PRODUCTIVE_API_BASE_URL}${path}`;
     const method = options?.method ?? "GET";
 
-    const response = await productiveFetch(url, {
+    const response = await productiveFetch(this.config.transport, url, {
       ...options,
       headers: {
         ...this.getHeaders(),
@@ -86,7 +83,7 @@ export class ProductiveAPIClient {
   ): Promise<void> {
     const url = `${this.config.PRODUCTIVE_API_BASE_URL}${path}`;
 
-    const response = await productiveFetch(url, {
+    const response = await productiveFetch(this.config.transport, url, {
       ...options,
       headers: {
         ...this.getHeaders(),
@@ -287,7 +284,7 @@ export class ProductiveAPIClient {
    * the underlying numeric IDs: 1 = user, 2 = contact, 3 = placeholder, 4 = agent.
    * (The string names from the spec description are rejected by the live API.)
    *
-   * Admin-only on the calling side. Paginates until all pages are fetched.
+   * Run as the "productive-bot" system user (tools/users.ts). Paginates until all pages are fetched.
    */
   /**
    * List internal Productive users (login-able accounts).
@@ -296,7 +293,7 @@ export class ProductiveAPIClient {
    * custom_role so callers can resolve human-readable role names (this org
    * uses custom roles, so role_id alone is not enough).
    *
-   * Admin-only on the calling side. Paginates until all pages are fetched.
+   * Run as the "productive-bot" system user (tools/users.ts). Paginates until all pages are fetched.
    */
   async listUsers(): Promise<{
     people: ProductivePerson[];
@@ -811,13 +808,9 @@ export class ProductiveAPIClient {
     // The reposition endpoint returns 204 No Content on success
     const url = `${this.config.PRODUCTIVE_API_BASE_URL}tasks/${taskId}/reposition`;
 
-    const response = await productiveFetch(url, {
+    const response = await productiveFetch(this.config.transport, url, {
       method: "PATCH",
-      headers: {
-        "X-Auth-Token": this.config.PRODUCTIVE_API_TOKEN,
-        "X-Organization-Id": this.config.PRODUCTIVE_ORG_ID,
-        "Content-Type": "application/vnd.api+json",
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(requestBody),
     });
 
@@ -1389,17 +1382,13 @@ export class ProductiveAPIClient {
    * Fetch an attachment file, leaving the body unread so it can be streamed.
    *
    * Attachment files live on `files.productive.io`, which does not accept the
-   * `X-Auth-Token` header - it authenticates via a `token` query parameter and
-   * otherwise 302s to the Productive login page. The tokenised URL is built
-   * here and never leaves this method, so the API token stays out of tool
-   * output and logs.
+   * `X-Auth-Token` header: it authenticates via a `token` query parameter and
+   * otherwise 302s to the Productive login page. Connections adds that
+   * parameter itself (api/transport.ts), so no token passes through here.
    */
   async fetchAttachmentFile(fileUrl: string): Promise<Response> {
-    const separator = fileUrl.includes("?") ? "&" : "?";
-    const authedUrl = `${fileUrl}${separator}token=${encodeURIComponent(this.config.PRODUCTIVE_API_TOKEN)}`;
-
     // Only the wait for the headers is bounded: the body is streamed on and may be large.
-    const response = await productiveFetch(authedUrl, undefined, { timeout: "headers" });
+    const response = await productiveFetch(this.config.transport, fileUrl, undefined, { timeout: "headers" });
 
     if (!response.ok) throw await productiveFailure(response);
 
@@ -1407,7 +1396,7 @@ export class ProductiveAPIClient {
     // than a 4xx, so detect that explicitly instead of returning a page of
     // HTML as if it were the file.
     const contentType = response.headers.get("content-type");
-    const landedOnLogin = response.url.includes("/public/login");
+    const landedOnLogin = Boolean(response.url?.includes("/public/login"));
     const unexpectedHtml =
       !!contentType?.includes("text/html") &&
       !fileUrl.split("?")[0].toLowerCase().endsWith(".html");
@@ -1415,7 +1404,7 @@ export class ProductiveAPIClient {
       await response.body?.cancel();
       log.warn("productive.attachment_login_redirect", { path: new URL(fileUrl).pathname });
       throw new ProductiveApiError(
-        "Attachment download was redirected to the Productive login page - the API token is not authorised for this file.",
+        "Attachment download was redirected to the Productive login page: your Productive token may not open this file.",
         403,
       );
     }

@@ -9,7 +9,7 @@ import { ErrorCode, McpError } from '../errors.js';
 export interface ToolContext {
   client: ProductiveAPIClient;
   config: Config;
-  /** Signs download links for attachments; absent when the user has no Productive ID. */
+  /** Makes download links for attachments; absent when the sign-in holds no ID token to put in them. */
   attachmentLinks?: AttachmentLinkSigner;
 }
 
@@ -24,10 +24,14 @@ export const WRITE: ToolAnnotations = { readOnlyHint: false, destructiveHint: fa
 /** The handlers return plain text content; this gives them the SDK's result type. */
 export const result = async (pending: Promise<unknown>): Promise<CallToolResult> => (await pending) as CallToolResult;
 
+/** Why "me" can't be resolved: the person's Productive account isn't connected on apps.functn.com. */
+export const ME_UNAVAILABLE =
+  '"me" is not available: no Productive account is connected to your sign-in. Connect it at https://apps.functn.com, then try again.';
+
 /** Resolves "me" to the signed-in user's person ID; other values pass through. */
 export function resolveMe(id: string, config: Config): string {
   if (id !== 'me') return id;
-  if (!config.PRODUCTIVE_USER_ID) throw new McpError(ErrorCode.InvalidRequest, '"me" is not available: no Productive user is linked to this sign-in', 'not_configured');
+  if (!config.PRODUCTIVE_USER_ID) throw new McpError(ErrorCode.InvalidRequest, ME_UNAVAILABLE, 'forbidden');
   return config.PRODUCTIVE_USER_ID;
 }
 

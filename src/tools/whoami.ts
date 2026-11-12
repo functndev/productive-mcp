@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '../errors.js';
-import { READ, result, type RegisterTools } from './context.js';
+import { ME_UNAVAILABLE, READ, result, type RegisterTools } from './context.js';
 
 export const whoAmISchema = z.object({});
 
@@ -17,7 +17,7 @@ export async function whoAmI(
       return {
         content: [{
           type: 'text',
-          text: 'No Productive user is linked to this sign-in, so "me" is not available.',
+          text: ME_UNAVAILABLE,
         }],
       };
     }

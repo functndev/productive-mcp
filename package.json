@@ -1,6 +1,6 @@
 {
-  "name": "remote-mcp-server-authless",
-  "version": "0.0.0",
+  "name": "productive-mcp",
+  "version": "2.1.0",
   "private": true,
   "scripts": {
     "deploy": "cf deploy",

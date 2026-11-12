@@ -1,4 +1,4 @@
-// Copied from functndev/functn-it v0.10.0 (d40aad6): logging/http-error.ts. Do not edit here; change it there and copy it over.
+// Copied from functndev/functn-it v0.11.3 (dbe463f): logging/http-error.ts. Do not edit here; change it there and copy it over.
 // An answer to a failed request: functndev/functn-it, errors/README.md.
 //
 // The error an app throws to answer its caller with a status and a code, and

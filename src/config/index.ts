@@ -1,32 +1,15 @@
-import { z } from "zod";
+import type { ProductiveTransport } from "../api/transport.js";
 
-const configSchema = z.object({
-  PRODUCTIVE_API_TOKEN: z.string().min(1, "API token is required"),
-  PRODUCTIVE_ORG_ID: z.string().min(1, "Organization ID is required"),
-  PRODUCTIVE_USER_ID: z.string().optional(),
-  PRODUCTIVE_USER_EMAIL: z.string().optional(),
-  PRODUCTIVE_API_BASE_URL: z
-    .string()
-    .url()
-    .default("https://api.productive.io/api/v2/"),
-  /**
-   * Optional API token of a user with admin privileges. Used only by tools
-   * that require elevated access (e.g. listing all users). Resolved in
-   * access-handler from any USER_MAPPING entry flagged with isAdmin:true.
-   */
-  PRODUCTIVE_ADMIN_API_TOKEN: z.string().optional(),
-});
-
-export type Config = z.infer<typeof configSchema>;
-
-export function parseConfig(env: Record<string, unknown>): Config {
-  const result = configSchema.safeParse(env);
-
-  if (!result.success) {
-    // Field names and messages only: the values include API tokens.
-    const issues = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
-    throw new Error(`Invalid configuration (${issues}). Please check your environment variables.`);
-  }
-
-  return result.data;
+/** What the Productive client and the tools get for one request: who is asking, and how to reach Productive. */
+export interface Config {
+  /** e.g. https://api.productive.io/api/v2/ (with the trailing slash). */
+  PRODUCTIVE_API_BASE_URL: string;
+  /** The signed-in person's Productive person ID ("me"), when their Productive account is connected. */
+  PRODUCTIVE_USER_ID?: string;
+  /** The signed-in person's Access email. */
+  PRODUCTIVE_USER_EMAIL?: string;
+  /** Productive as the person (apps.functn.com Connections in the Worker; api/transport.ts). */
+  transport: ProductiveTransport;
+  /** Productive as the "productive-bot" system user, for what personal tokens can't do (list_users). */
+  systemTransport?: ProductiveTransport;
 }

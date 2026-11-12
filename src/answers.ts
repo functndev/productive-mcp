@@ -9,10 +9,3 @@ export function actorOf(email: string | undefined): Actor | undefined {
   return email && EMAIL.test(email) ? (email as Actor) : undefined;
 }
 
-/**
- * Marks an answer whose failure this code already wrote as its one `error` line, so
- * withOAuthFailures (lib/oauth-failures.ts) doesn't write a second: `wasLogged` reads `logged`.
- */
-export function alreadyLogged<T extends object>(answer: T): T {
-  return Object.assign(answer, { logged: true });
-}

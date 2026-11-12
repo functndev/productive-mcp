@@ -5,7 +5,7 @@ import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveTaskUpdate, ProductiveIncludedResource, ProductiveAttachment } from '../api/types.js';
 import { formatAttachmentList } from './attachments.js';
 import type { Config } from '../config/index.js';
-import { READ, WRITE, result, resolveMe, runSteps, type RegisterTools, type Step, type TextResult } from './context.js';
+import { ME_UNAVAILABLE, READ, WRITE, result, resolveMe, runSteps, type RegisterTools, type Step, type TextResult } from './context.js';
 import { updateTaskStatusTool } from './task-status.js';
 import { updateTaskSprint } from './task-sprint.js';
 import { moveTaskToList } from './task-list-move.js';
@@ -117,13 +117,9 @@ export async function getTaskTool(
     const url = `${config.PRODUCTIVE_API_BASE_URL}tasks/${params.task_id}?include=task_list,assignee,workflow_status,attachments`;
     
     // Create request with proper headers from config
-    const response = await productiveFetch(url, {
+    const response = await productiveFetch(config.transport, url, {
       method: 'GET',
-      headers: {
-        'X-Auth-Token': config.PRODUCTIVE_API_TOKEN,
-        'X-Organization-Id': config.PRODUCTIVE_ORG_ID,
-        'Content-Type': 'application/vnd.api+json',
-      }
+      headers: { 'Content-Type': 'application/vnd.api+json' }
     });
     
     if (!response.ok) throw await productiveFailure(response);
@@ -288,7 +284,7 @@ export async function createTaskTool(
       if (!config?.PRODUCTIVE_USER_ID) {
         throw new McpError(
           ErrorCode.InvalidParams,
-          'Cannot use "me" reference - PRODUCTIVE_USER_ID is not configured in environment'
+          ME_UNAVAILABLE
         );
       }
       assigneeId = config.PRODUCTIVE_USER_ID;
@@ -406,7 +402,7 @@ export async function updateTaskAssignmentTool(
       if (!config?.PRODUCTIVE_USER_ID) {
         throw new McpError(
           ErrorCode.InvalidParams,
-          'Cannot use "me" reference - PRODUCTIVE_USER_ID is not configured in environment'
+          ME_UNAVAILABLE
         );
       }
       assigneeId = config.PRODUCTIVE_USER_ID;

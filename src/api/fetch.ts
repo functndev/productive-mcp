@@ -3,7 +3,8 @@
 // took (`u.count`: productiveCalls, productiveMs, productiveFailed) and what it changed. A failed
 // answer is one warn line; a call is never a line of its own.
 
-import { getUnit, log, type Unit } from '../lib/log.js';
+import { getUnit, log, type ToolError, type Unit } from '../lib/log.js';
+import type { ProductiveTransport } from './transport.js';
 import type { ProductiveError } from './types.js';
 
 /**
@@ -23,6 +24,10 @@ export class ProductiveApiError extends Error {
       timedOut?: boolean;
       /** Productive's Retry-After for a 429, in seconds. */
       retryAfterS?: number;
+      /** What the failure is for the model, when the status alone doesn't say (Connections refusals). */
+      kind?: ToolError;
+      /** The Connections error code, for a call apps.functn.com refused (api/transport.ts). */
+      connectionsError?: string;
       cause?: unknown;
     } = {},
   ) {
@@ -35,6 +40,7 @@ export class ProductiveApiError extends Error {
     if (unit) {
       const n = notesOf(unit);
       n.lastFailedStatus = status;
+      n.lastFailedKind = options.kind;
       n.lastFailedMessage = message;
     }
   }
@@ -46,6 +52,8 @@ type Notes = {
   failures: number;
   /** Status of the last failed call; 0 when the request itself failed (network, timeout). */
   lastFailedStatus?: number;
+  /** The kind that failure was given, when its status alone doesn't say. */
+  lastFailedKind?: ToolError;
   /** The message of that failure, as the model got it. */
   lastFailedMessage?: string;
   writes: string[];
@@ -107,12 +115,13 @@ function timeoutSignal(scope: 'call' | 'headers'): { signal: AbortSignal; done: 
 }
 
 /**
- * fetch() for Productive. Counts the call on the current unit and writes one warn line for a
+ * fetch() for Productive, through `transport` (api/transport.ts). Counts the call on the current unit and writes one warn line for a
  * failed answer (`productive.rate_limited` for a 429). Never logs the URL's query (the attachment
  * host takes the token there) or any header. A call that gets no answer within
  * PRODUCTIVE_TIMEOUT_MS, or none at all, throws a ProductiveApiError with status 0.
  */
 export async function productiveFetch(
+  transport: ProductiveTransport,
   url: string,
   init?: RequestInit,
   options: { timeout?: 'call' | 'headers' } = {},
@@ -123,11 +132,23 @@ export async function productiveFetch(
   const timeout = timeoutSignal(options.timeout ?? 'call');
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await transport(url, {
       ...init,
       signal: init?.signal ? AbortSignal.any([init.signal, timeout.signal]) : timeout.signal,
     });
   } catch (error) {
+    if (error instanceof ProductiveApiError) {
+      // apps.functn.com refused or failed the call (api/transport.ts): counted, one warn line.
+      const n = countCall(unit, started, error.status);
+      if (!n || n.failures <= MAX_FAILURES_LOGGED) {
+        log.warn('productive.request_failed', {
+          httpMethod: method,
+          path: pathOf(url),
+          connectionsError: error.options.connectionsError,
+        });
+      }
+      throw error;
+    }
     const n = countCall(unit, started, 0);
     const timedOut = isTimeout(error);
     if (!n || n.failures <= MAX_FAILURES_LOGGED) {
@@ -196,8 +217,9 @@ export async function productiveFailure(
   if (status === 401) {
     await response.body?.cancel();
     return new ProductiveApiError(
-      'Productive rejected the API token this server uses for you (401). Someone at functn has to replace it; trying again will not help.',
+      'Productive rejected your connected API token (401). Replace it at https://apps.functn.com, then try again.',
       status,
+      { kind: 'forbidden' },
     );
   }
   if (status === 429) {

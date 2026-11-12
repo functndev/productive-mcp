@@ -39,13 +39,9 @@ export async function listSubtasksTool(
     const page = params.page ?? 1;
     const url = `${config.PRODUCTIVE_API_BASE_URL}tasks?filter[parent_task_id]=${params.parent_task_id}&include=assignee,workflow_status&page[size]=${limit}&page[number]=${page}`;
 
-    const response = await productiveFetch(url, {
+    const response = await productiveFetch(config.transport, url, {
       method: 'GET',
-      headers: {
-        'X-Auth-Token': config.PRODUCTIVE_API_TOKEN,
-        'X-Organization-Id': config.PRODUCTIVE_ORG_ID,
-        'Content-Type': 'application/vnd.api+json',
-      },
+      headers: { 'Content-Type': 'application/vnd.api+json' },
     });
 
     if (!response.ok) throw await productiveFailure(response);

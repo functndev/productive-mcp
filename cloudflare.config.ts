@@ -18,32 +18,48 @@ export default defineConfig({
     env: {
       OAUTH_KV: bindings.kv({ id: "2d94e8819a9a41ae97f5a3bf1ecc6f61" }),
 
+      // Productive calls go through apps.functn.com Connections (src/api/transport.ts), which adds the
+      // person's own token and the organization; this is only the base the client builds URLs on.
       PRODUCTIVE_API_BASE_URL: bindings.text("https://api.productive.io/api/v2/"),
       // Canonical origin: the OAuth resource is <PUBLIC_URL>/mcp.
       PUBLIC_URL: bindings.text("https://productive-mcp.functn.com"),
-      // Productive.io organization ID (`X-Organization-Id` header).
-      PRODUCTIVE_ORG_ID: bindings.text("3591"),
-      // Cloudflare Access SaaS app "Productive MCP" → OIDC. Not secret: the client ID shows up in
-      // every login redirect.
+
+      // Cloudflare Access for SaaS app "Productive MCP" (1030dd38-4944-44d7-80ad-59b5d8627130),
+      // OIDC: who may sign in. Not secret: the client ID shows up in every login redirect.
+      ACCESS_ISSUER: bindings.text(
+        "https://functn.cloudflareaccess.com/cdn-cgi/access/sso/oidc/4ed17bf00f728c7cc917d0701e6278eb3dbbf310d280862f394f985d0ad2d208",
+      ),
       ACCESS_CLIENT_ID: bindings.text(
         "4ed17bf00f728c7cc917d0701e6278eb3dbbf310d280862f394f985d0ad2d208",
       ),
-      ACCESS_AUTHORIZATION_URL: bindings.text(
-        "https://functn.cloudflareaccess.com/cdn-cgi/access/sso/oidc/4ed17bf00f728c7cc917d0701e6278eb3dbbf310d280862f394f985d0ad2d208/authorization",
+
+      // Who may use this server, with which roles: apps.functn.com (src/access.ts). Its Access
+      // entrypoint exchanges the person's Access for SaaS ID token for a signed grant, verified here
+      // on every request (src/apps-functn-com/grant-client.ts). The caller needs an `app` in
+      // functn-apps src/connections/callers.ts.
+      ACCESS: bindings.worker({
+        worker: "apps-functn-com",
+        exportName: "Access",
+        props: { caller: "productive-mcp" },
+      }),
+      // The keys grants are signed with (functn-apps cloudflare.config.ts, also at
+      // https://apps.functn.com/.well-known/jwks.json). Not secret.
+      GRANT_PUBLIC_KEYS: bindings.text(
+        '{"keys":[{"kty":"OKP","crv":"Ed25519","x":"IWRgQKUSkmN7UpwuHmnodTst8EwjVucffrMVL98KUMk","kid":"grants-2026-10"}]}',
       ),
-      ACCESS_TOKEN_URL: bindings.text(
-        "https://functn.cloudflareaccess.com/cdn-cgi/access/sso/oidc/4ed17bf00f728c7cc917d0701e6278eb3dbbf310d280862f394f985d0ad2d208/token",
-      ),
-      ACCESS_JWKS_URL: bindings.text(
-        "https://functn.cloudflareaccess.com/cdn-cgi/access/sso/oidc/4ed17bf00f728c7cc917d0701e6278eb3dbbf310d280862f394f985d0ad2d208/jwks",
-      ),
+      // Productive as the person, with the token they connected on apps.functn.com; list_users with
+      // the system credential "productive-bot" (src/apps-functn-com/connections-client.ts).
+      CONNECTIONS: bindings.worker({
+        worker: "apps-functn-com",
+        exportName: "Connections",
+        props: { caller: "productive-mcp" },
+      }),
 
       // Secrets: values in 1Password (Infra - L7 / productive-mcp), see .env.tpl.
-      // JSON keyed by lowercased email: {"alice@example.com":{"userId":123,"apiToken":"...","isAdmin":true}}
-      USER_MAPPING: bindings.secret(),
       // Cloudflare Access SaaS app OIDC client secret.
       ACCESS_CLIENT_SECRET: bindings.secret(),
-      // Encrypts the OAuth approval cookie (`openssl rand -hex 32`).
+      // Encrypts attachment download links, which carry the person's ID token
+      // (src/attachment-links.ts). `openssl rand -hex 32`.
       COOKIE_ENCRYPTION_KEY: bindings.secret(),
     },
   },

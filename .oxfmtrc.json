@@ -2,5 +2,11 @@
 	"printWidth": 100,
 	"tabWidth": 4,
 	"useTabs": true,
-	"ignorePatterns": ["src/lib/log.ts", "src/lib/http-error.ts", "src/lib/oauth-failures.ts"]
+	"ignorePatterns": [
+		"src/lib/log.ts",
+		"src/lib/http-error.ts",
+		"src/lib/oauth-failures.ts",
+		"src/apps-functn-com/grant-client.ts",
+		"src/apps-functn-com/connections-client.ts"
+	]
 }

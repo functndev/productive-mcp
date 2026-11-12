@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ProductiveAPIClient } from '../api/client.js';
 import { McpError, ErrorCode } from '../errors.js';
 import { ProductiveTimeEntryCreate } from '../api/types.js';
-import { READ, WRITE, result, type RegisterTools } from './context.js';
+import { ME_UNAVAILABLE, READ, WRITE, result, type RegisterTools } from './context.js';
 
 // Helper function to parse time input into minutes
 function parseTimeToMinutes(timeInput: string): number {
@@ -104,7 +104,7 @@ export async function listTimeEntresTool(
       if (!config?.PRODUCTIVE_USER_ID) {
         throw new McpError(
           ErrorCode.InvalidParams,
-          'Cannot use "me" reference - PRODUCTIVE_USER_ID is not configured in environment'
+          ME_UNAVAILABLE
         );
       }
       personId = config.PRODUCTIVE_USER_ID;
@@ -206,7 +206,7 @@ export async function createTimeEntryTool(
       if (!config?.PRODUCTIVE_USER_ID) {
         throw new McpError(
           ErrorCode.InvalidParams,
-          'Cannot use "me" reference - PRODUCTIVE_USER_ID is not configured in environment'
+          ME_UNAVAILABLE
         );
       }
       personId = config.PRODUCTIVE_USER_ID;

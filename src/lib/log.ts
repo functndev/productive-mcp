@@ -1,4 +1,4 @@
-// Copied from functndev/functn-it v0.10.0 (d40aad6): logging/log.ts. Do not edit here; change it there and copy it over.
+// Copied from functndev/functn-it v0.11.3 (dbe463f): logging/log.ts. Do not edit here; change it there and copy it over.
 // The logging convention in code: functndev/functn-it, logging/README.md.
 // Needs `nodejs_compat`, or `nodejs_als` on an old compatibility date
 // (AsyncLocalStorage). No dependencies.
@@ -92,6 +92,18 @@ export function wasLogged(error: unknown): boolean {
   return (
     loggedErrors.has(error) || (error as { logged?: unknown }).logged === true
   )
+}
+
+/**
+ * Marks an answer whose failure already has its one `error` line, and returns
+ * it. For an error built from a failure a unit or `log.error` logged (a 502 or
+ * 503 `HttpError` made in the catch around a failed unit, an answer built from
+ * `access.ts`'s logged `AccessError`): `unit()` marks the error it caught, not
+ * the new one, so the recipe answering it would write a second line.
+ */
+export function alreadyLogged<T extends object>(answer: T): T {
+  markLogged(answer)
+  return answer
 }
 
 /**

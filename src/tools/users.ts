@@ -8,34 +8,25 @@ export const listUsersSchema = z.object({});
 /**
  * List internal Productive users.
  *
- * Available to every authenticated user, but always executed against the
- * admin API token resolved from USER_MAPPING (any entry flagged
- * `isAdmin: true`). The calling user's own credentials are not used.
+ * Available to every signed-in user, but always run as the "productive-bot" system user through
+ * apps.functn.com Connections (allowed there: GET people, GET custom_roles), because a personal
+ * token may not list everyone. The bot has limited permissions and holds no write access here.
  */
 export async function listUsers(
   client: ProductiveAPIClient,
   args: unknown,
-  adminApiToken: string | undefined,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   try {
     listUsersSchema.parse(args);
 
-    if (!adminApiToken) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'list_users requires an admin API token. Flag at least one USER_MAPPING entry with "isAdmin": true.',
-        'not_configured',
-      );
-    }
-
-    // Build a one-off client that uses the admin token for this single call.
     const baseConfig = client.getConfig();
-    const adminClient = new ProductiveAPIClient({
-      ...baseConfig,
-      PRODUCTIVE_API_TOKEN: adminApiToken,
-    });
+    if (!baseConfig.systemTransport) {
+      throw new McpError(ErrorCode.InvalidRequest, 'list_users is not available on this server.', 'not_configured');
+    }
+    // A one-off client that calls Productive as the bot for this single call.
+    const botClient = new ProductiveAPIClient({ ...baseConfig, transport: baseConfig.systemTransport });
 
-    const { people, rolesById } = await adminClient.listUsers();
+    const { people, rolesById } = await botClient.listUsers();
 
     const users = people.map((p) => {
       const fullName =
@@ -75,7 +66,7 @@ export async function listUsers(
   }
 }
 
-export const registerUserTools: RegisterTools = (server, { client, config }) => {
+export const registerUserTools: RegisterTools = (server, { client }) => {
   server.registerTool(
     "list_users",
     {
@@ -84,6 +75,6 @@ export const registerUserTools: RegisterTools = (server, { client, config }) => 
       inputSchema: listUsersSchema,
       annotations: READ,
     },
-    (args) => result(listUsers(client, args, config.PRODUCTIVE_ADMIN_API_TOKEN))
+    (args) => result(listUsers(client, args))
   );
 };

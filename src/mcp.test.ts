@@ -4,15 +4,27 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import type { Config } from './config/index.js';
 import { checkLine } from './lib/log.js';
-import { createMcpServer } from './mcp.js';
+import { createMcpServer, type McpUser } from './mcp.js';
+import { refusalOf } from './api/transport.js';
+import type { ProviderError } from './apps-functn-com/connections-client.js';
+
+/** Productive straight through the (mocked) global fetch; in the Worker it is apps.functn.com Connections. */
+const direct = (url: string, init?: RequestInit) => fetch(url, init);
 
 const config: Config = {
-  PRODUCTIVE_API_TOKEN: 'token',
-  PRODUCTIVE_ORG_ID: '1',
   PRODUCTIVE_USER_ID: '123',
   PRODUCTIVE_USER_EMAIL: 'me@functn.com',
   PRODUCTIVE_API_BASE_URL: 'https://api.productive.io/api/v2/',
+  transport: direct,
+  systemTransport: direct,
 };
+const EDITOR: McpUser = { email: 'me@functn.com', role: 'editor' };
+let user: McpUser = EDITOR;
+let serverConfig: Config = config;
+beforeEach(() => {
+  user = EDITOR;
+  serverConfig = config;
+});
 
 type Call = { method: string; url: URL; body: any };
 type Route = (call: Call) => unknown | Response;
@@ -42,7 +54,7 @@ function mockProductive(routes: Record<string, Route>) {
 
 let id = 0;
 async function rpc(method: string, params: Record<string, unknown> = {}, protocolVersion = '2025-06-18') {
-  const handler = createMcpHandler(() => createMcpServer(config));
+  const handler = createMcpHandler(() => createMcpServer(serverConfig, user));
   const modern = protocolVersion >= '2026-07-28';
   const res = await handler.fetch(
     new Request('http://localhost/mcp', {
@@ -144,13 +156,40 @@ describe('tools/list', () => {
   test('carries 2026-07-28 cache hints for clients on the current revision', async () => {
     const { result } = await rpc('tools/list', {}, '2026-07-28');
     expect(result.resultType).toBe('complete');
-    expect(result.ttlMs).toBe(60 * 60 * 1000);
+    // Depends on the person's role, so no longer than the access token lives.
+    expect(result.ttlMs).toBe(10 * 60 * 1000);
     expect(result.cacheScope).toBe('private');
   });
 
-  test('tells the model who "me" is', async () => {
+  test('names the server by the convention and tells the model where to start', async () => {
     const { result } = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
-    expect(result.instructions).toContain('person ID 123');
+    expect(result.serverInfo).toMatchObject({ name: 'functn-productive', title: 'functn Productive' });
+    expect(result.instructions).toContain('whoami');
+  });
+
+  test('a reader sees only the tools that read', async () => {
+    user = { email: 'me@functn.com', role: 'reader' };
+    const { tools } = (await rpc('tools/list')).result;
+    expect(tools.length).toBe(29);
+    for (const tool of tools) expect(tool.annotations.readOnlyHint).toBe(true);
+  });
+
+  test("a reader's call to a write tool is refused, and Productive is never called", async () => {
+    user = { email: 'me@functn.com', role: 'reader' };
+    const calls = mockProductive({ 'POST tasks': () => ({ data: { id: '1', type: 'tasks', attributes: {} } }) });
+    const response = await rpc('tools/call', { name: 'create_task', arguments: { title: 'x', project_id: '1', task_list_id: '2' } });
+    expect(JSON.stringify(response)).toContain('create_task');
+    expect(response.result?.isError ?? Boolean(response.error)).toBe(true);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('roles', () => {
+  test('every tool declares its minimum role, and write tools need editor', async () => {
+    const { TOOL_ROLES } = await import('./roles.js');
+    const { tools } = (await rpc('tools/list')).result;
+    expect(Object.keys(TOOL_ROLES).sort()).toEqual(tools.map((t: { name: string }) => t.name).sort());
+    for (const tool of tools) expect(TOOL_ROLES[tool.name]).toBe(tool.annotations.readOnlyHint ? 'reader' : 'editor');
   });
 });
 
@@ -352,7 +391,8 @@ describe('logging', () => {
         event: 'mcp.tool',
         tool: 'list_tasks',
         actor: 'me@functn.com',
-        actorPersonId: '123',
+        role: 'editor',
+        productivePersonId: '123',
         projectId: '7',
         productiveCalls: 1,
         result: 'ok',
@@ -397,6 +437,7 @@ describe('logging', () => {
 
   test('a setup someone at functn must fix is not_configured, and fails at error (D6)', async () => {
     mockProductive({});
+    serverConfig = { ...config, systemTransport: undefined };
     await callTool('list_users', {});
     expect(lines()).toEqual([
       expect.objectContaining({ level: 'error', event: 'mcp.tool', toolError: 'not_configured', result: 'failed' }),
@@ -452,17 +493,58 @@ describe('logging', () => {
     ]);
   });
 
-  test('a Productive 401 is a revoked token of ours: not_configured, failed at error (D6)', async () => {
+  test("a Productive 401 is the person's own token: forbidden, theirs to replace on apps.functn.com", async () => {
     mockProductive({ 'GET tasks': () => Response.json({ errors: [{ detail: 'Unauthorized' }] }, { status: 401 }) });
     const result = await callTool('list_tasks', {});
-    expect(textOf(result)).toContain('Someone at functn has to replace it');
+    expect(textOf(result)).toContain('https://apps.functn.com');
     expect(lines().slice(-1)[0]).toMatchObject({
-      level: 'error',
+      level: 'info',
       event: 'mcp.tool',
-      toolError: 'not_configured',
+      toolError: 'forbidden',
       productiveStatus: 401,
-      result: 'failed',
+      result: 'ok',
     });
+  });
+
+  /** Productive through a stand-in for Connections that refuses with `error`. */
+  const connectionsRefuses = (error: ProviderError) => {
+    serverConfig = { ...config, transport: async () => Promise.reject(refusalOf(error)) };
+  };
+
+  test('no Productive account connected: a forbidden tool error that says where to connect', async () => {
+    connectionsRefuses({ ok: false, error: 'not_connected', message: 'Productive is not connected.', connectUrl: 'https://apps.functn.com/?provider=productive' });
+    const result = await callTool('list_tasks', {});
+    expect(textOf(result)).toContain('https://apps.functn.com/?provider=productive');
+    expect(lines()).toEqual([
+      expect.objectContaining({ level: 'warn', event: 'productive.request_failed', connectionsError: 'not_connected' }),
+      expect.objectContaining({ level: 'info', event: 'mcp.tool', toolError: 'forbidden', result: 'ok' }),
+    ]);
+  });
+
+  test('apps.functn.com refusing this server is ours: not_configured, failed at error (D6)', async () => {
+    connectionsRefuses({ ok: false, error: 'not_allowed', message: 'productive-mcp may not GET tasks' });
+    const result = await callTool('list_tasks', {});
+    expect(textOf(result)).toContain('Tell functn IT');
+    expect(textOf(result)).not.toContain('may not GET');
+    expect(lines().slice(-1)[0]).toMatchObject({ level: 'error', event: 'mcp.tool', toolError: 'not_configured', result: 'failed' });
+  });
+
+  test('apps.functn.com down is upstream, failed at error (D13)', async () => {
+    connectionsRefuses({ ok: false, error: 'unavailable', message: 'apps.functn.com is not working right now' });
+    await callTool('list_tasks', {});
+    expect(lines().slice(-1)[0]).toMatchObject({ level: 'error', event: 'mcp.tool', toolError: 'upstream', result: 'failed' });
+  });
+
+  test('list_users runs as the Productive bot, not as the person', async () => {
+    const used: string[] = [];
+    serverConfig = {
+      ...config,
+      transport: async (url, init) => (used.push(`person ${url}`), fetch(url, init)),
+      systemTransport: async (url, init) => (used.push(`bot ${url}`), fetch(url, init)),
+    };
+    mockProductive({ 'GET people': () => ({ data: [] }) });
+    await callTool('list_users', {});
+    expect(used.map((u) => u.split(' ')[0])).toEqual(['bot']);
   });
 
   test("Productive's own trouble fails the call at error and tells the model it is upstream (D13)", async () => {

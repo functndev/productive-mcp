@@ -1,106 +1,110 @@
 import { ProductiveAPIClient } from "./api/client.js";
 import { ProductiveApiError } from "./api/fetch.js";
+import { connectionsTransport } from "./api/transport.js";
 import { errorResponse, HttpError, requestIdOf } from "./lib/http-error.js";
-import { unit } from "./lib/log.js";
-import { type Config, parseConfig } from "./config/index.js";
-import { parseUserMapping } from "./access-handler.js";
+import { type Actor, unit } from "./lib/log.js";
+import { base64UrlDecode, base64UrlEncode } from "./oidc.js";
 
 /**
- * Short-lived signed download links for attachments.
+ * Short-lived download links for attachments.
  *
  * get_attachment cannot hand documents to Claude Code as an embedded file:
  * the claude.ai connector strips the blob on the way, and Claude Code then
  * rejects the whole tool result. Instead the tool returns a link to this
  * Worker, which Claude can fetch with curl and open from disk.
  *
- * The link carries the attachment ID, the Productive user ID and an expiry,
- * signed with HMAC-SHA256. Whoever holds the link can download that one file
- * until it expires, without logging in. On download the Worker re-reads the
- * attachment with that user's own API token, so the link never grants more
- * than the user could see in Productive.
+ * The link carries the attachment ID, an expiry and the person's own Access
+ * for SaaS ID token, encrypted and authenticated with AES-GCM (key from
+ * COOKIE_ENCRYPTION_KEY), so nothing in it is readable or can be changed.
+ * Whoever holds the link can download that one file until it expires, without
+ * logging in. On download the Worker reads the attachment through
+ * apps.functn.com Connections as that person, so the link never grants more
+ * than they could see in Productive, and stops working once they lose their
+ * Productive connection or their ID token expires.
  */
 
 export const ATTACHMENT_PATH_PREFIX = "/attachments/";
 
-/** How long a download link stays valid. */
+/** How long a download link stays valid, at most: never past the ID token in it. */
 const LINK_TTL_SECONDS = 15 * 60;
 
-const encoder = new TextEncoder();
+/** Binds a ciphertext to this use of the key: v1 links were HMAC-signed and are no longer accepted. */
+const LINK_AAD = new TextEncoder().encode("attachment-download-link-v2");
 
-/**
- * Derives the signing key from COOKIE_ENCRYPTION_KEY, so no extra secret has
- * to be set. The label keeps these signatures from ever matching a cookie's.
- */
-async function signingKey(secret: string): Promise<CryptoKey> {
-  const base = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const derived = await crypto.subtle.sign(
-    "HMAC",
-    base,
-    encoder.encode("attachment-download-link-v1"),
-  );
-  return crypto.subtle.importKey(
-    "raw",
-    derived,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
+/** What a link holds, encrypted. */
+type LinkPayload = {
+  /** Attachment ID. */
+  a: string;
+  /** The person's Access for SaaS ID token. */
+  t: string;
+  /** Their email, for the log. */
+  e: string;
+  /** Expiry, epoch seconds. */
+  x: number;
+};
+
+/** The AES-GCM key, from COOKIE_ENCRYPTION_KEY with a label of its own, so no extra secret has to be set. */
+async function linkKey(secret: string): Promise<CryptoKey> {
+  const material = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`attachment-links:${secret}`));
+  return crypto.subtle.importKey("raw", material, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
 
-function signedPayload(attachmentId: string, userId: string, expires: number): Uint8Array {
-  return encoder.encode(`${attachmentId}:${userId}:${expires}`);
+async function seal(payload: LinkPayload, secret: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData: LINK_AAD },
+    await linkKey(secret),
+    new TextEncoder().encode(JSON.stringify(payload)),
+  );
+  const out = new Uint8Array(iv.length + sealed.byteLength);
+  out.set(iv);
+  out.set(new Uint8Array(sealed), iv.length);
+  return base64UrlEncode(out);
 }
 
-function toBase64Url(buffer: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(buffer)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function fromBase64Url(value: string): Uint8Array | null {
+/** The payload, or null for a link that is malformed, tampered with or sealed with another key. */
+async function unseal(value: string, secret: string): Promise<LinkPayload | null> {
   try {
-    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-    return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const bytes = base64UrlDecode(value);
+    if (bytes.length < 13) return null;
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: bytes.slice(0, 12), additionalData: LINK_AAD },
+      await linkKey(secret),
+      bytes.slice(12),
+    );
+    const payload = JSON.parse(new TextDecoder().decode(plain)) as Partial<LinkPayload>;
+    if (typeof payload.a !== "string" || typeof payload.t !== "string" || typeof payload.e !== "string") return null;
+    if (typeof payload.x !== "number") return null;
+    return payload as LinkPayload;
   } catch {
     return null;
   }
 }
 
 export interface AttachmentLinkSigner {
-  /** Returns a signed download URL and when it expires. */
+  /** Returns a download URL and when it expires. */
   create(attachmentId: string, filename: string): Promise<{ url: string; expiresAt: Date }>;
 }
 
 export function createAttachmentLinkSigner(
   origin: string,
   secret: string,
-  userId: string,
+  person: { email: string; idToken: string; idTokenExpiresAt?: number },
 ): AttachmentLinkSigner {
   return {
     async create(attachmentId, filename) {
-      const expires = Math.floor(Date.now() / 1000) + LINK_TTL_SECONDS;
-      const signature = await crypto.subtle.sign(
-        "HMAC",
-        await signingKey(secret),
-        signedPayload(attachmentId, userId, expires),
-      );
+      const now = Math.floor(Date.now() / 1000);
+      const tokenExpires = person.idTokenExpiresAt ? Math.floor(person.idTokenExpiresAt / 1000) : Infinity;
+      const expires = Math.min(now + LINK_TTL_SECONDS, tokenExpires);
+      const sealed = await seal({ a: attachmentId, t: person.idToken, e: person.email, x: expires }, secret);
       // The filename is only there so the URL ends in the real name; it is
-      // not signed and ignored on download. `'` is escaped too, because
-      // get_attachment puts the URL in a single-quoted curl command.
+      // ignored on download. `'` is escaped too, because get_attachment puts
+      // the URL in a single-quoted curl command.
       const path = [attachmentId, filename]
         .map(part => encodeURIComponent(part).replace(/'/g, "%27"))
         .join("/");
       const url = new URL(`${ATTACHMENT_PATH_PREFIX}${path}`, origin);
-      url.searchParams.set("u", userId);
-      url.searchParams.set("exp", String(expires));
-      url.searchParams.set("sig", toBase64Url(signature));
+      url.searchParams.set("l", sealed);
       return { url: url.toString(), expiresAt: new Date(expires * 1000) };
     },
   };
@@ -119,15 +123,23 @@ function contentDisposition(filename: string): string {
  */
 function answerOfProductive(error: ProductiveApiError): { answer: HttpError; refusal: boolean } {
   const { status } = error;
+  const { kind } = error.options;
+  if (kind === "forbidden") {
+    // The person's Productive connection is missing or broken, or Productive refused the file.
+    return { answer: new HttpError(403, error.message), refusal: true };
+  }
+  if (kind === "not_configured") {
+    return { answer: new HttpError(503, error.message, { code: "not_configured" }), refusal: false };
+  }
+  if (kind === "upstream" && status !== 0) {
+    // apps.functn.com itself failed.
+    return { answer: new HttpError(503, error.message, { code: "unavailable" }), refusal: false };
+  }
   if (status === 404 || status === 410) {
     return { answer: new HttpError(404, "The attachment no longer exists in Productive."), refusal: true };
   }
   if (status === 403) {
     return { answer: new HttpError(403, "Your Productive account may not open this attachment."), refusal: true };
-  }
-  if (status === 401) {
-    // The user's Productive token in USER_MAPPING was rejected: someone at functn has to replace it.
-    return { answer: new HttpError(503, error.message, { code: "not_configured" }), refusal: false };
   }
   if (status === 429) {
     const retryAfter = error.options.retryAfterS === undefined ? {} : { retryAfterS: error.options.retryAfterS };
@@ -156,9 +168,9 @@ function answer(error: HttpError, requestId: string | undefined): Response {
 }
 
 /**
- * Serves `GET /attachments/<id>/<filename>?u=&exp=&sig=` as one attachment.download unit: a link
- * that is wrong, expired or no longer allowed is `skipped` with its status at info; a failure of
- * ours or Productive's fails the unit at error.
+ * Serves `GET /attachments/<id>/<filename>?l=` as one attachment.download unit: a link that is
+ * wrong, expired or no longer allowed is `skipped` with its status at info; a failure of ours or
+ * Productive's fails the unit at error.
  */
 export async function handleAttachmentDownload(request: Request, env: Env): Promise<Response> {
   const requestId = requestIdOf(request);
@@ -170,12 +182,9 @@ export async function handleAttachmentDownload(request: Request, env: Env): Prom
   const attachmentId = decodeURIComponent(
     url.pathname.slice(ATTACHMENT_PATH_PREFIX.length).split("/")[0] ?? "",
   );
-  const userId = url.searchParams.get("u") ?? "";
-  const expires = Number(url.searchParams.get("exp"));
-  const signature = fromBase64Url(url.searchParams.get("sig") ?? "");
+  const sealed = url.searchParams.get("l") ?? "";
 
-  const context = { attachmentId, ...(userId && /^\d+$/.test(userId) && { actor: `productive:${userId}` as const }) };
-  return unit("attachment.download", context, async (u) => {
+  return unit("attachment.download", { attachmentId }, async (u) => {
     const refuse = (error: HttpError) => {
       u.result("skipped");
       u.set({ statusCode: error.status, reason: error.reason ?? error.code });
@@ -186,50 +195,27 @@ export async function handleAttachmentDownload(request: Request, env: Env): Prom
       return answer(error, requestId);
     };
     const invalid = (reason: string) =>
-      new HttpError(reason === "bad_signature" || reason === "unknown_user" ? 403 : 400, "Invalid download link", {
-        code: reason === "bad_signature" || reason === "unknown_user" ? "forbidden" : "invalid_input",
+      new HttpError(reason === "bad_link" ? 403 : 400, "Invalid download link", {
+        code: reason === "bad_link" ? "forbidden" : "invalid_input",
         reason,
       });
 
-    if (!/^\d+$/.test(attachmentId) || !userId || !Number.isInteger(expires) || !signature) {
-      return refuse(invalid("malformed_link"));
-    }
-
-    const valid = await crypto.subtle.verify(
-      "HMAC",
-      await signingKey(env.COOKIE_ENCRYPTION_KEY),
-      signature,
-      signedPayload(attachmentId, userId, expires),
-    );
-    if (!valid) return refuse(invalid("bad_signature"));
-    if (expires < Date.now() / 1000) {
+    if (!/^\d+$/.test(attachmentId) || !sealed) return refuse(invalid("malformed_link"));
+    const link = await unseal(sealed, env.COOKIE_ENCRYPTION_KEY);
+    // Tampered with, made for another attachment, or from before v2 (HMAC-signed, `u`/`sig`).
+    if (!link || link.a !== attachmentId) return refuse(invalid("bad_link"));
+    if (/^[^\s@:]+@[^\s@:]+$/.test(link.e)) u.set({ actor: link.e as Actor });
+    if (link.x < Date.now() / 1000) {
       return refuse(
         new HttpError(410, "Download link expired. Call get_attachment again for a new one.", { code: "link_expired" }),
       );
     }
 
-    let mapping: ReturnType<typeof parseUserMapping>;
-    try {
-      mapping = parseUserMapping(env.USER_MAPPING);
-    } catch (error) {
-      return fail(new HttpError(503, "The Productive MCP is misconfigured on our side. Tell functn IT.", { code: "not_configured" }), error);
-    }
-    const entry = Object.values(mapping).find((e) => String(e?.userId) === userId);
-    // Signed for someone who has since been removed from USER_MAPPING.
-    if (!entry?.apiToken) return refuse(invalid("unknown_user"));
-
-    let config: Config;
-    try {
-      config = parseConfig({
-        PRODUCTIVE_API_TOKEN: entry.apiToken,
-        PRODUCTIVE_USER_ID: userId,
-        PRODUCTIVE_ORG_ID: env.PRODUCTIVE_ORG_ID,
-        PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
-      });
-    } catch (error) {
-      return fail(new HttpError(503, "The Productive MCP is misconfigured on our side. Tell functn IT.", { code: "not_configured" }), error);
-    }
-    const client = new ProductiveAPIClient(config);
+    const client = new ProductiveAPIClient({
+      PRODUCTIVE_API_BASE_URL: env.PRODUCTIVE_API_BASE_URL,
+      PRODUCTIVE_USER_EMAIL: link.e,
+      transport: connectionsTransport(env.CONNECTIONS, { accessToken: link.t }, env.PRODUCTIVE_API_BASE_URL, { requestId }),
+    });
 
     try {
       const { data: attachment } = await client.getAttachment(attachmentId);

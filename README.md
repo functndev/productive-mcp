@@ -4,76 +4,58 @@ Cloudflare Worker hosting a remote [Model Context Protocol](https://modelcontext
 
 ## How auth works
 
-This Worker uses the [Access for SaaS](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/secure-mcp-servers/#access-for-saas-application) pattern via [`@cloudflare/workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider). MCP clients (e.g. Claude Desktop) perform standard OAuth 2.1 dynamic client registration against the Worker; the Worker brokers the actual login through your Access for SaaS OIDC application.
+The server follows functn-it's MCP convention (`mcp/README.md`; the Tracking MCP is its model). [`@cloudflare/workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) makes the Worker an OAuth server for MCP clients, and an OIDC client of **Cloudflare Access for SaaS** upstream. apps.functn.com decides who may use it and calls Productive for them.
 
-Flow:
-
-1. MCP client hits `/authorize`. The Worker redirects straight to your Access for SaaS authorization endpoint (PKCE), with no page of its own: only Claude's callbacks and local clients may receive tokens (`src/clients.ts`), so there is no consent step.
-2. User authenticates through Access (any IdP you have configured).
-3. Access redirects back to `/callback` with an authorization code. The Worker exchanges it for `access_token` + `id_token`, verifies the `id_token` against `ACCESS_JWKS_URL`, and reads the `email` claim.
-4. Email is looked up in the `USER_MAPPING` secret. Unknown emails get `403`.
-5. Worker calls `OAUTH_PROVIDER.completeAuthorization()` with `props` containing the resolved `productiveUserId` + `productiveApiToken`. Those props are persisted in `OAUTH_KV` and passed as `ctx.props` to every subsequent `/mcp` request, which builds a fresh, stateless MCP server for that user.
+1. The MCP client hits `/authorize`. Only Claude's callbacks and local clients may receive tokens (`src/clients.ts`), so there is no consent page: the Worker goes straight on to Access (PKCE S256), tying the round trip to the browser with the provider's `beginUpstream`/`finishUpstream`.
+2. The person signs in with Google through Access (policy "Functn Team").
+3. Access returns to `/oauth/access/callback`. The Worker exchanges the code and verifies the ID token fully (`src/oidc.ts`: RS256 with a `kid`, keys cached per isolate, issuer, audience, `exp`/`nbf`, 15 s timeouts).
+4. apps.functn.com's `Access` entrypoint exchanges the ID token for a signed grant with the person's roles in app `productive` (`src/access.ts`). No role is "access denied" with a link to apps.functn.com.
+5. The grant props hold only `email`, `grant`, the Access refresh token, and the ID token with its expiry. Access tokens live 10 minutes; every refresh re-checks Access and renews the grant and the ID token (`src/authorize.ts`); every `/mcp` request verifies the grant locally and answers 401 `invalid_token` when it fails.
+6. Tools call Productive through apps.functn.com `Connections` with the person's ID token, so each person works with **their own** Productive token, connected on apps.functn.com (`src/api/transport.ts`). `list_users` runs as the system credential `productive-bot`. No Productive token passes through this Worker.
+7. Each tool has a minimum role (`src/roles.ts`): `reader` gets the reading tools, `editor` (or `admin`) all of them.
 
 ## Endpoints
 
 | Path                                 | Purpose                                       |
 | ------------------------------------ | --------------------------------------------- |
 | `GET /authorize`                     | OAuth authorization endpoint                  |
-| `POST /token`                        | OAuth token endpoint                          |
-| `POST /register`                     | OAuth dynamic client registration             |
-| `GET /callback`                      | Upstream Access redirect target               |
+| `POST /oauth/token`                  | OAuth token endpoint (old path `/token` kept) |
+| `POST /oauth/register`               | OAuth dynamic client registration (old path `/register` kept) |
+| `GET /oauth/access/callback`         | Access for SaaS redirect target               |
 | `/mcp`                               | Streamable HTTP MCP transport (auth required) |
+| `GET /attachments/<id>/<name>?l=…`   | Download links from `get_attachment` (15 min) |
+
+`/token` and `/register` stay because connectors added before the move keep the token endpoint they discovered.
 
 ## Cloudflare setup
 
-### 1. Create the KV namespace
+### 1. KV namespace
 
-```sh
-bunx cf kv namespaces create --title OAUTH_KV
-```
+`OAUTH_KV` in [cloudflare.config.ts](cloudflare.config.ts) holds the OAuth grants, purged daily by the cron.
 
-Put the resulting id into the `OAUTH_KV` binding in [cloudflare.config.ts](cloudflare.config.ts).
+### 2. Access for SaaS OIDC application
 
-### 2. Create an Access for SaaS OIDC application
+**Zero Trust → Access → Applications → "Productive MCP"** (SaaS, OIDC): Google only, policy "Functn Team", PKCE on, scopes `openid email profile offline_access`, redirect URL `https://productive-mcp.functn.com/oauth/access/callback`. Its issuer and client ID are text bindings (`ACCESS_ISSUER`, `ACCESS_CLIENT_ID`); the client secret is the Worker secret `ACCESS_CLIENT_SECRET`.
 
-In the Cloudflare dashboard: **Zero Trust → Access → Applications → Add an application → SaaS → OIDC**.
+### 3. apps.functn.com
 
-- **Application name**: `Productive MCP`
-- **Redirect URLs**: `https://<your-worker-host>/callback`
-- **Scopes**: `openid`, `email`, `profile`
-- Configure Access policies (e.g. emails on your domain).
-
-Copy these from the OIDC settings into the 1Password item `productive-mcp` (vault `Infra - L7`).
-Only the client secret is a Worker secret; the rest is plain config in `cloudflare.config.ts`:
-
-| Field in dashboard     | Variable                   | Lives in                    |
-| ---------------------- | -------------------------- | --------------------------- |
-| Client ID              | `ACCESS_CLIENT_ID`         | `cloudflare.config.ts`      |
-| Client secret          | `ACCESS_CLIENT_SECRET`     | Worker secret               |
-| Authorization endpoint | `ACCESS_AUTHORIZATION_URL` | `cloudflare.config.ts`      |
-| Token endpoint         | `ACCESS_TOKEN_URL`         | `cloudflare.config.ts`      |
-| Key endpoint (JWKS)    | `ACCESS_JWKS_URL`          | `cloudflare.config.ts`      |
+- The caller `productive-mcp` in functn-apps `src/connections/callers.ts` names this server's app (`app: "productive"`) and the Access for SaaS client ID; it may call Productive as the person (`*`) and as `productive-bot` (`GET people`, `GET custom_roles`).
+- People get a role in app `productive` on apps.functn.com and connect their own Productive token there.
 
 ### 3. Set Worker secrets
 
 1Password is the source of truth: the item `productive-mcp` in vault `Infra - L7` holds every value
-(secrets and config), one field per variable. `.env.tpl` lists the three secrets as `op://`
+(secrets and config), one field per variable. `.env.tpl` lists the two secrets as `op://`
 references. Change a secret in 1Password, then push it:
 
 ```sh
-for name in USER_MAPPING ACCESS_CLIENT_SECRET COOKIE_ENCRYPTION_KEY; do
+for name in ACCESS_CLIENT_SECRET COOKIE_ENCRYPTION_KEY; do
   bunx cf workers secrets update "$name" --worker productive-mcp \
     --text "$(op read "op://Infra - L7/productive-mcp/$name")"
 done
 ```
 
-`COOKIE_ENCRYPTION_KEY` is `openssl rand -hex 32`. `USER_MAPPING` is single-line JSON:
-
-```json
-{"alice@example.com":{"userId":123456,"apiToken":"alice-token","isAdmin":true},"bob@example.com":{"userId":234567,"apiToken":"bob-token"}}
-```
-
-Email keys are looked up case-insensitively (lowercased).
+`COOKIE_ENCRYPTION_KEY` is `openssl rand -hex 32`; it encrypts attachment download links.
 
 ## Local development
 
@@ -85,7 +67,7 @@ npm install
 npm run dev      # cf dev
 ```
 
-A real Access for SaaS app is still required for the OAuth dance to work locally. Either add `http://localhost:8787/callback` as a redirect URL on your existing app, or create a separate dev app.
+A real Access for SaaS app is still required for the OAuth dance to work locally. Either add `http://localhost:8787/oauth/access/callback` as a redirect URL on your existing app, or create a separate dev app. Tools also need apps.functn.com's `Access` and `Connections` bindings, which `cf dev` reaches only with a local apps.functn.com.
 
 ## Deploying
 

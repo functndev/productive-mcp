@@ -1,4 +1,4 @@
-// Copied from functndev/functn-it v0.10.0 (d40aad6): logging/oauth-failures.ts. Do not edit here; change it there and copy it over.
+// Copied from functndev/functn-it v0.11.3 (dbe463f): logging/oauth-failures.ts. Do not edit here; change it there and copy it over.
 // How a Worker built on `@cloudflare/workers-oauth-provider` answers a
 // failure: functndev/functn-it, errors/README.md. Needs `http-error.ts` and
 // `log.ts` next to it.

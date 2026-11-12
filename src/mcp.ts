@@ -7,6 +7,9 @@ import { productiveNotes } from './api/fetch.js';
 import { McpError, noteOfRefusal, type ToolErrorKind } from './errors.js';
 import { log, unit } from './lib/log.js';
 import { actorOf } from './answers.js';
+import { reaches, type Role } from './access.js';
+import { TOOL_ROLES } from './roles.js';
+import pkg from '../package.json';
 import type { RegisterTools, ToolContext } from './tools/context.js';
 import { registerWhoamiTools } from './tools/whoami.js';
 import { registerUserTools } from './tools/users.js';
@@ -52,18 +55,31 @@ const TOOL_MODULES: RegisterTools[] = [
   registerAttachmentTools,
 ];
 
-/** The same for every user, so clients may cache it for an hour (2026-07-28 cache hints). */
-const LIST_CACHE = { ttlMs: 60 * 60 * 1000, cacheScope: 'private' as const };
+/**
+ * 2026-07-28 cache hints. The tool list depends on the person's role, hence private; 10 minutes
+ * matches the access token lifetime, so a role change shows up by the next token refresh.
+ */
+const TOOLS_CACHE = { ttlMs: 10 * 60 * 1000, cacheScope: 'private' as const };
+/** The same for every user. */
+const PROMPTS_CACHE = { ttlMs: 60 * 60 * 1000, cacheScope: 'private' as const };
 
-export function createMcpServer(config: Config, attachmentLinks?: AttachmentLinkSigner): McpServer {
+const INSTRUCTIONS = `functn Productive: Productive.io as the signed-in person, with their own Productive account (connected on apps.functn.com).
+- Structure: Customers (companies) → Projects → Folders → Task Lists → Tasks (with subtasks, todos, comments, attachments).
+- Start with list_projects or list_tasks; IDs are numeric strings. "me" in assignee_id / person_id is the signed-in person (whoami shows who).
+- Errors that mention apps.functn.com mean the person has to connect or replace their Productive token there.`;
+
+/** Who the server is for: the person's email (the log's actor) and their role from apps.functn.com. */
+export type McpUser = { email?: string; role: Role };
+
+export function createMcpServer(config: Config, user: McpUser, attachmentLinks?: AttachmentLinkSigner): McpServer {
   const server = new McpServer(
-    { name: 'productive-mcp', title: 'Productive', version: '2.0.0' },
+    { name: 'functn-productive', title: 'functn Productive', version: pkg.version },
     {
-      instructions: `Productive.io: Customers → Projects → Folders → Task Lists → Tasks.${config.PRODUCTIVE_USER_ID ? ` The signed-in user ("me") has person ID ${config.PRODUCTIVE_USER_ID}.` : ''}`,
-      cacheHints: { 'tools/list': LIST_CACHE, 'prompts/list': LIST_CACHE },
+      instructions: INSTRUCTIONS,
+      cacheHints: { 'tools/list': TOOLS_CACHE, 'prompts/list': PROMPTS_CACHE },
     }
   );
-  logToolCalls(server, config);
+  logToolCalls(server, config, user);
 
   const ctx: ToolContext = { client: new ProductiveAPIClient(config), config, attachmentLinks };
   for (const register of TOOL_MODULES) register(server, ctx);
@@ -97,8 +113,8 @@ export function createMcpServer(config: Config, attachmentLinks?: AttachmentLink
  */
 function kindOfStatus(status: number): ToolErrorKind | undefined {
   if (status === 400 || status === 422) return 'invalid_input';
-  // The Productive token from USER_MAPPING was rejected: someone at functn has to replace it.
-  if (status === 401) return 'not_configured';
+  // Productive rejected the person's own connected token: theirs to replace on apps.functn.com.
+  if (status === 401) return 'forbidden';
   if (status === 403) return 'forbidden';
   if (status === 404 || status === 410) return 'not_found';
   if (status === 409) return 'conflict';
@@ -111,9 +127,8 @@ function kindOfStatus(status: number): ToolErrorKind | undefined {
 /**
  * Kinds that leave the person with nothing because of something on our side or Productive's, not
  * the model's: the call is a failure at `error` that still tells the model its kind
- * (functn-it errors/README.md). `not_configured` is D6: a credential of ours that is missing or
- * stopped working (a revoked Productive token in USER_MAPPING) needs someone at functn, so it must
- * reach someone; `upstream` and `rate_limited` are D13: one `error` per request Productive failed.
+ * (functn-it errors/README.md). `not_configured` is D6: our own setup refused (apps.functn.com
+ * not accepting this server's call) needs someone at functn, so it must reach someone; `upstream` and `rate_limited` are D13: one `error` per request Productive failed.
  */
 const FAILING_KINDS: ReadonlySet<ToolErrorKind> = new Set(['not_configured', 'upstream', 'rate_limited']);
 
@@ -125,7 +140,7 @@ const FAILING_KINDS: ReadonlySet<ToolErrorKind> = new Set(['not_configured', 'up
 function toolErrorOf(): { toolError: ToolErrorKind; toolMessage?: string } | undefined {
   const notes = productiveNotes();
   if (notes?.lastFailedStatus !== undefined) {
-    const toolError = kindOfStatus(notes.lastFailedStatus);
+    const toolError = notes.lastFailedKind ?? kindOfStatus(notes.lastFailedStatus);
     return toolError && { toolError, toolMessage: notes.lastFailedMessage };
   }
   const toolError = noteOfRefusal();
@@ -180,7 +195,8 @@ function idFields(args: unknown): Record<string, unknown> {
 }
 
 /**
- * Wraps registerTool so every call is one mcp.tool unit (logging convention, lib/log.ts): the
+ * Wraps registerTool so only tools the person's role reaches are registered (roles.ts), and every
+ * call is one mcp.tool unit (logging convention, lib/log.ts): the
  * tool, the actor, the ids it was called with, its Productive calls (productiveCalls, -Ms,
  * -Failed, the last failed productiveStatus) and what it changed (`writes`). A call the model can
  * act on (bad input, a Productive 4xx) is `toolError` with a kind on an `ok` line; a kind that
@@ -189,14 +205,23 @@ function idFields(args: unknown): Record<string, unknown> {
  * schema rejects never reach the tool: withoutSchemaUri's validate writes their mcp.tool line.
  * Tool schemas go out without "$schema".
  */
-function logToolCalls(server: McpServer, config: Config): void {
+function logToolCalls(server: McpServer, config: Config, user: McpUser): void {
   const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
   (server as { registerTool: unknown }).registerTool = (
     name: string,
     toolConfig: { inputSchema?: StandardSchemaWithJSON },
     callback: (...args: unknown[]) => Promise<ToolResult>
   ) => {
-    const context = { tool: name, actor: actorOf(config.PRODUCTIVE_USER_EMAIL), actorPersonId: config.PRODUCTIVE_USER_ID };
+    // Every tool declares its minimum role (roles.ts); one that doesn't is a bug, not a public tool.
+    const minimum = TOOL_ROLES[name];
+    if (!minimum) throw new Error(`Tool ${name} has no minimum role in roles.ts`);
+    if (!reaches(user.role, minimum)) return undefined;
+    const context = {
+      tool: name,
+      actor: actorOf(user.email ?? config.PRODUCTIVE_USER_EMAIL),
+      role: user.role,
+      ...(config.PRODUCTIVE_USER_ID && { productivePersonId: config.PRODUCTIVE_USER_ID }),
+    };
     const inputSchema =
       toolConfig.inputSchema &&
       withoutSchemaUri(toolConfig.inputSchema, (issues, durationMs) =>

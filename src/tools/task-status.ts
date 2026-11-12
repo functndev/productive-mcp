@@ -20,14 +20,11 @@ async function resolveWorkflowStatuses(
   taskId: string,
   cfg: Config
 ): Promise<{ workflowId: string; statuses: Array<{ id: string; name: string; categoryId: number }> }> {
-  const headers = {
-    'X-Auth-Token': cfg.PRODUCTIVE_API_TOKEN,
-    'X-Organization-Id': cfg.PRODUCTIVE_ORG_ID,
-    'Content-Type': 'application/vnd.api+json',
-  };
+  const headers = { 'Content-Type': 'application/vnd.api+json' };
 
   // Step 1: Get the task with project included to find its project ID
   const taskRes = await productiveFetch(
+    cfg.transport,
     `${cfg.PRODUCTIVE_API_BASE_URL}tasks/${taskId}?include=project`,
     { headers }
   );
@@ -40,6 +37,7 @@ async function resolveWorkflowStatuses(
 
   // Step 2: Get the project with workflow included to find workflow_id
   const projRes = await productiveFetch(
+    cfg.transport,
     `${cfg.PRODUCTIVE_API_BASE_URL}projects/${projectId}?include=workflow`,
     { headers }
   );
@@ -52,6 +50,7 @@ async function resolveWorkflowStatuses(
 
   // Step 3: List all statuses in this workflow
   const statusRes = await productiveFetch(
+    cfg.transport,
     `${cfg.PRODUCTIVE_API_BASE_URL}workflow_statuses?filter[workflow_id]=${workflowId}&page[size]=200`,
     { headers }
   );
